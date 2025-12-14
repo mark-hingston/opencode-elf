@@ -6,11 +6,37 @@
 
 This plugin implements the Emergent Learning Framework (originally from [Spacehunterz/ELF](https://context7.com/spacehunterz/emergent-learning-framework_elf/llms.txt)) as an OpenCode plugin. It provides:
 
-- **Golden Rules**: Constitutional principles that guide all actions
-- **Heuristics**: Pattern-based suggestions triggered by keywords/regex
-- **Learnings**: Automatic recording of tool execution failures and successes
-- **Context Injection**: Relevant past experiences are injected into each conversation
+- **Golden Rules**: Constitutional principles that guide all actions  
+- **Heuristics**: Pattern-based suggestions triggered by keywords/regex  
+- **Learnings**: Automatic recording of tool execution failures and successes  
+- **Context Injection**: Relevant past experiences are injected into each conversation  
+- **Hybrid Storage**: Support for both global and project-scoped memories  
 - **Local-First**: Uses local SQLite storage and local embeddings (no API calls)
+
+## Key Features
+
+### Hybrid Storage
+
+ELF now supports both **global** and **project-scoped** memories:
+
+- **Global memories** (`~/.opencode/elf/memory.db`): Shared across all projects
+- **Project memories** (`<project>/.opencode/elf/memory.db`): Specific to each project
+- Project detection via `.git` or `.opencode` directories
+- Project memories are prioritized in context injection
+- Add project memories to `.gitignore` for privacy, or commit for team sharing
+
+Example:
+```
+"Add a global rule: Always validate user inputs"
+"Add a project rule: This API requires JWT authentication"
+```
+
+Context will show both, with project memories tagged:
+```
+Golden Rules:
+- Always validate user inputs
+- This API requires JWT authentication [project]
+```
 
 ## Installation
 
@@ -79,10 +105,11 @@ Example injection:
 Golden Rules:
 - Always validate user inputs before processing
 - Use TypeScript strict mode for type safety
+- This project requires JWT authentication [project]
 
 Relevant Past Experiences:
 ✗ [85%] Tool 'bash' failed: command not found - npm
-✓ [78%] Successfully used 'git' to commit changes with proper message
+✗ [78%] API authentication failed without JWT token [project]
 
 Applicable Heuristics:
 - When working with npm, always check if node_modules exists
@@ -92,7 +119,7 @@ Applicable Heuristics:
 
 When a tool executes, ELF:
 1. Monitors the result (stdout, stderr, exit codes)
-2. Records failures automatically
+2. Records failures automatically to project database
 3. Stores them with embeddings for future retrieval
 
 ### Agent Tool (Programmatic Access)
@@ -100,14 +127,20 @@ When a tool executes, ELF:
 The plugin provides an `elf` tool that agents can invoke to manage memory:
 
 **Available modes:**
-- `list-rules` - List all golden rules
-- `list-heuristics` - List all heuristics
-- `list-learnings` - View recent learnings (optional limit)
-- `add-rule` - Add new golden rule (auto-generates embeddings)
-- `add-heuristic` - Add new heuristic pattern
+- `list-rules` - List all golden rules (optional `scope: "global" | "project"`)
+- `list-heuristics` - List all heuristics (optional `scope`)
+- `list-learnings` - View recent learnings (optional `limit` and `scope`)
+- `add-rule` - Add new golden rule (auto-generates embeddings, optional `scope`)
+- `add-heuristic` - Add new heuristic pattern (optional `scope`)
 - `metrics` - View performance metrics
 
-Agents automatically use this tool when you ask them to manage ELF memory in natural language.
+**Examples:**
+```
+"Add a global rule: Always use async/await"
+"Add a project rule: This API requires authentication tokens"
+"Show me project-specific golden rules"
+"List all learnings from this project"
+```
 
 ## Quick Start
 
@@ -177,7 +210,9 @@ Simply ask OpenCode to manage your ELF memory in natural language:
 
 ```
 "Add a golden rule: Always use async/await instead of callbacks"
+"Add a project-specific rule: This API requires JWT authentication"
 "Show me my current golden rules"
+"Show me project-specific learnings"
 "Add a heuristic for npm errors"
 "What have I learned recently?"
 ```
@@ -319,16 +354,36 @@ export const SIMILARITY_THRESHOLD = 0.7;       // Min similarity for relevance
 
 ### Database Location
 
-Currently, all ELF memory is stored globally at:
+ELF now supports **hybrid storage** with both global and project-scoped memories:
+
+**Global Storage (cross-project):**
 - **macOS/Linux**: `~/.opencode/elf/memory.db`
 - **Windows**: `C:\Users\<username>\.opencode\elf\memory.db`
+- Contains memories that apply across all your projects
+- Default seeded golden rules and heuristics are stored here
 
-This means your ELF learns across ALL your projects. A future version will support:
-- Per-project memory (`.opencode/elf/memory.db`)
-- Hybrid mode (both global and project-specific)
-- Team sharing via git
+**Project Storage (project-specific):**
+- **Location**: `<project-root>/.opencode/elf/memory.db`
+- Automatically detected by finding `.git` or `.opencode` directories
+- Contains memories specific to the current project
+- Project memories are prioritized over global ones in context injection
+- Add to `.gitignore` for private memories, or commit for team sharing
 
-To customize the database location, edit `ELF_DIR` in `src/config.ts` and rebuild the plugin.
+**How Hybrid Storage Works:**
+- Both databases are queried simultaneously
+- Project memories are shown first with a `[project]` tag
+- Global memories are shown without tags
+- When adding new memories, use the `scope` parameter:
+  - `scope: "global"` - Store in global database (default for manual additions)
+  - `scope: "project"` - Store in project database (default for learnings)
+
+**Configuration:**
+To disable hybrid storage and use global-only, edit `src/config.ts`:
+```typescript
+export const ENABLE_HYBRID_STORAGE = false;
+```
+
+To customize the database location, edit `GLOBAL_ELF_DIR` in `src/config.ts` and rebuild the plugin.
 
 ## Database Schema
 
@@ -462,6 +517,7 @@ If performance is slower, check:
 - [x] CLI management tools
 - [x] Performance metrics
 - [x] Simulation testing
+- [x] **Hybrid storage (global + project-scoped memories)**
 - [ ] Success detection (currently only failures are auto-recorded)
 - [ ] Experiment tracking (hypothesis testing)
 - [ ] Decision records (ADRs)
@@ -491,10 +547,6 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 - Follow existing code patterns
 - Add JSDoc comments for public APIs
 - Keep functions small and focused
-
-## Credits
-
-Based on the [Emergent Learning Framework](https://github.com/Spacehunterz/Emergent-Learning-Framework_ELF).
 
 ## License
 

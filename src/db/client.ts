@@ -2,27 +2,54 @@ import { createClient, type Client } from "@libsql/client";
 import { mkdirSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { createHash } from "node:crypto";
-import { DB_PATH } from "../config.js";
+import { GLOBAL_DB_PATH } from "../config.js";
 
-let dbClient: Client | null = null;
+export type DbScope = "global" | "project";
 
-export function getDbClient(): Client {
-  if (!dbClient) {
-    // Ensure directory exists
-    const dir = dirname(DB_PATH);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
+// Track multiple database clients
+const dbClients: Map<string, Client> = new Map();
 
-    dbClient = createClient({
-      url: `file:${DB_PATH}`,
-    });
+/**
+ * Get or create a database client for a specific path
+ */
+export function getDbClient(dbPath: string = GLOBAL_DB_PATH): Client {
+  const existingClient = dbClients.get(dbPath);
+  if (existingClient) {
+    return existingClient;
   }
-  return dbClient;
+  
+  // Ensure directory exists
+  const dir = dirname(dbPath);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+
+  const client = createClient({
+    url: `file:${dbPath}`,
+  });
+  
+  dbClients.set(dbPath, client);
+  return client;
 }
 
-export async function initDatabase(): Promise<void> {
-  const db = getDbClient();
+/**
+ * Get multiple database clients for hybrid queries
+ */
+export function getDbClients(paths: { global: string; project: string | null }): Client[] {
+  const clients: Client[] = [getDbClient(paths.global)];
+  
+  if (paths.project) {
+    clients.push(getDbClient(paths.project));
+  }
+  
+  return clients;
+}
+
+/**
+ * Initialize a database with the ELF schema
+ */
+export async function initDatabase(dbPath?: string): Promise<void> {
+  const db = getDbClient(dbPath);
   
   const queries = [
     `CREATE TABLE IF NOT EXISTS golden_rules (
@@ -72,8 +99,8 @@ export async function initDatabase(): Promise<void> {
 /**
  * Check if the database is empty (no golden rules or heuristics)
  */
-export async function isDatabaseEmpty(): Promise<boolean> {
-  const db = getDbClient();
+export async function isDatabaseEmpty(dbPath?: string): Promise<boolean> {
+  const db = getDbClient(dbPath);
   
   const [rulesResult, heuristicsResult] = await Promise.all([
     db.execute("SELECT COUNT(*) as count FROM golden_rules"),
@@ -164,10 +191,10 @@ export async function seedGoldenRules(addGoldenRule: (content: string) => Promis
 /**
  * Seed default heuristics
  */
-export async function seedHeuristics(): Promise<void> {
+export async function seedHeuristics(dbPath?: string): Promise<void> {
   console.log("ELF: Seeding default heuristics...");
   
-  const db = getDbClient();
+  const db = getDbClient(dbPath);
   
   for (const heuristic of DEFAULT_HEURISTICS) {
     const id = createHash('sha256')

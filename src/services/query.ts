@@ -1,10 +1,39 @@
-import { getDbClient } from "../db/client.js";
+import { getDbClient, getDbClients } from "../db/client.js";
 import { embeddingService } from "./embeddings.js";
-import type { GoldenRule, Learning, Heuristic, SearchResult, ELFContext } from "../types/elf.js";
-import { MAX_GOLDEN_RULES, MAX_RELEVANT_LEARNINGS, SIMILARITY_THRESHOLD } from "../config.js";
+import type { GoldenRule, Learning, Heuristic, SearchResult, ELFContext, MemoryScope } from "../types/elf.js";
+import { MAX_GOLDEN_RULES, MAX_RELEVANT_LEARNINGS, SIMILARITY_THRESHOLD, getDbPaths } from "../config.js";
 import { createHash } from "node:crypto";
+import type { Client } from "@libsql/client";
 
 export class QueryService {
+  private workingDirectory: string;
+
+  constructor(workingDirectory?: string) {
+    this.workingDirectory = workingDirectory || process.cwd();
+  }
+
+  /**
+   * Set the working directory for project-scoped queries
+   */
+  setWorkingDirectory(directory: string): void {
+    this.workingDirectory = directory;
+  }
+
+  /**
+   * Get all active database clients (global + project if available)
+   */
+  private getClients(): { clients: Client[]; scopes: MemoryScope[] } {
+    const paths = getDbPaths(this.workingDirectory);
+    const clients = getDbClients(paths);
+    const scopes: MemoryScope[] = ["global"];
+    
+    if (paths.project) {
+      scopes.push("project");
+    }
+    
+    return { clients, scopes };
+  }
+
   /**
    * Get relevant context for a given user prompt
    */
@@ -23,89 +52,141 @@ export class QueryService {
   }
 
   /**
-   * Get top N golden rules (constitutional principles)
-   * These should always be included in context
+   * Get top N golden rules (constitutional principles) from both databases
+   * Project rules come first, then global rules
    */
   private async getTopGoldenRules(): Promise<GoldenRule[]> {
-    const db = getDbClient();
-    const result = await db.execute({
-      sql: "SELECT * FROM golden_rules ORDER BY hit_count DESC LIMIT ?",
-      args: [MAX_GOLDEN_RULES],
-    });
+    const { clients, scopes } = this.getClients();
+    const allRules: GoldenRule[] = [];
+    
+    // Query each database
+    for (let i = 0; i < clients.length; i++) {
+      const db = clients[i];
+      const scope = scopes[i];
+      
+      const result = await db.execute({
+        sql: "SELECT * FROM golden_rules ORDER BY hit_count DESC",
+        args: [],
+      });
 
-    return result.rows.map(row => ({
-      id: row.id as string,
-      content: row.content as string,
-      embedding: JSON.parse(row.embedding as string),
-      created_at: row.created_at as number,
-      hit_count: row.hit_count as number,
-    }));
+      const rules = result.rows.map(row => ({
+        id: row.id as string,
+        content: row.content as string,
+        embedding: JSON.parse(row.embedding as string),
+        created_at: row.created_at as number,
+        hit_count: row.hit_count as number,
+        scope,
+      }));
+      
+      allRules.push(...rules);
+    }
+    
+    // Sort by hit count and take top N
+    // Prioritize project rules by giving them a slight boost in sorting
+    allRules.sort((a, b) => {
+      if (a.scope === "project" && b.scope === "global") return -1;
+      if (a.scope === "global" && b.scope === "project") return 1;
+      return b.hit_count - a.hit_count;
+    });
+    
+    return allRules.slice(0, MAX_GOLDEN_RULES);
   }
 
   /**
-   * Search for relevant learnings using vector similarity
+   * Search for relevant learnings using vector similarity across all databases
    */
   private async searchLearnings(prompt: string): Promise<SearchResult<Learning>[]> {
-    const db = getDbClient();
-    
-    // Generate embedding for the prompt
+    const { clients, scopes } = this.getClients();
     const promptEmbedding = await embeddingService.generate(prompt);
+    const allLearnings: SearchResult<Learning>[] = [];
     
-    // Get all learnings (in a production system, you'd want to optimize this)
-    const result = await db.execute("SELECT * FROM learnings");
+    // Query each database
+    for (let i = 0; i < clients.length; i++) {
+      const db = clients[i];
+      const scope = scopes[i];
+      
+      const result = await db.execute("SELECT * FROM learnings");
+      
+      const scoredLearnings = result.rows
+        .map(row => {
+          const learning: Learning = {
+            id: row.id as string,
+            content: row.content as string,
+            category: row.category as 'success' | 'failure',
+            embedding: JSON.parse(row.embedding as string),
+            created_at: row.created_at as number,
+            context_hash: row.context_hash as string,
+            scope,
+          };
+          
+          const score = embeddingService.cosineSimilarity(promptEmbedding, learning.embedding);
+          
+          return { item: learning, score };
+        })
+        .filter(result => result.score >= SIMILARITY_THRESHOLD);
+      
+      allLearnings.push(...scoredLearnings);
+    }
     
-    const scoredLearnings: SearchResult<Learning>[] = result.rows
-      .map(row => {
-        const learning: Learning = {
-          id: row.id as string,
-          content: row.content as string,
-          category: row.category as 'success' | 'failure',
-          embedding: JSON.parse(row.embedding as string),
-          created_at: row.created_at as number,
-          context_hash: row.context_hash as string,
-        };
-        
-        const score = embeddingService.cosineSimilarity(promptEmbedding, learning.embedding);
-        
-        return { item: learning, score };
-      })
-      .filter(result => result.score >= SIMILARITY_THRESHOLD)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, MAX_RELEVANT_LEARNINGS);
-
-    return scoredLearnings;
+    // Sort by score (project learnings get slight boost)
+    allLearnings.sort((a, b) => {
+      // Prioritize project learnings slightly
+      if (a.item.scope === "project" && b.item.scope === "global") {
+        return b.score - (a.score + 0.05); // Small boost for project
+      }
+      if (a.item.scope === "global" && b.item.scope === "project") {
+        return (b.score + 0.05) - a.score;
+      }
+      return b.score - a.score;
+    });
+    
+    return allLearnings.slice(0, MAX_RELEVANT_LEARNINGS);
   }
 
   /**
-   * Get heuristics that match keywords in the prompt
+   * Get heuristics that match keywords in the prompt from all databases
    */
   private async getMatchingHeuristics(prompt: string): Promise<Heuristic[]> {
-    const db = getDbClient();
-    const result = await db.execute("SELECT * FROM heuristics");
+    const { clients, scopes } = this.getClients();
+    const allHeuristics: Heuristic[] = [];
+    const seenPatterns = new Set<string>();
     
-    const matching: Heuristic[] = [];
-    
-    for (const row of result.rows) {
-      const heuristic: Heuristic = {
-        id: row.id as string,
-        pattern: row.pattern as string,
-        suggestion: row.suggestion as string,
-        created_at: row.created_at as number,
-      };
+    // Query each database (project first)
+    for (let i = 0; i < clients.length; i++) {
+      const db = clients[i];
+      const scope = scopes[i];
       
-      // Check if pattern matches prompt
-      try {
-        const regex = new RegExp(heuristic.pattern, "i");
-        if (regex.test(prompt)) {
-          matching.push(heuristic);
+      const result = await db.execute("SELECT * FROM heuristics");
+      
+      for (const row of result.rows) {
+        const pattern = row.pattern as string;
+        
+        // Skip duplicates (project takes precedence)
+        if (seenPatterns.has(pattern)) continue;
+        seenPatterns.add(pattern);
+        
+        const heuristic: Heuristic = {
+          id: row.id as string,
+          pattern,
+          suggestion: row.suggestion as string,
+          created_at: row.created_at as number,
+          scope,
+        };
+        
+        // Check if pattern matches prompt
+        try {
+          const regex = new RegExp(heuristic.pattern, "i");
+          if (regex.test(prompt)) {
+            allHeuristics.push(heuristic);
+          }
+        } catch (error) {
+          // Invalid regex, skip
+          console.error(`Invalid heuristic pattern: ${heuristic.pattern}`, error);
         }
-      } catch (error) {
-        // Invalid regex, skip
-        console.error(`Invalid heuristic pattern: ${heuristic.pattern}`, error);
       }
     }
     
-    return matching;
+    return allHeuristics;
   }
 
   /**
@@ -114,9 +195,12 @@ export class QueryService {
   async recordLearning(
     content: string,
     category: 'success' | 'failure',
-    context: string
+    context: string,
+    scope: MemoryScope = "project"
   ): Promise<void> {
-    const db = getDbClient();
+    const paths = getDbPaths(this.workingDirectory);
+    const dbPath = scope === "project" && paths.project ? paths.project : paths.global;
+    const db = getDbClient(dbPath);
     
     // Generate hash to avoid duplicates
     const contextHash = createHash('sha256').update(context).digest('hex').slice(0, 16);
@@ -157,8 +241,10 @@ export class QueryService {
   /**
    * Add a new golden rule
    */
-  async addGoldenRule(content: string): Promise<void> {
-    const db = getDbClient();
+  async addGoldenRule(content: string, scope: MemoryScope = "global"): Promise<void> {
+    const paths = getDbPaths(this.workingDirectory);
+    const dbPath = scope === "project" && paths.project ? paths.project : paths.global;
+    const db = getDbClient(dbPath);
     const embedding = await embeddingService.generate(content);
     
     const id = createHash('sha256')
@@ -183,13 +269,16 @@ export class QueryService {
    * Increment hit count for golden rules that were used
    */
   async incrementGoldenRuleHits(ruleIds: string[]): Promise<void> {
-    const db = getDbClient();
+    const { clients } = this.getClients();
     
-    for (const id of ruleIds) {
-      await db.execute({
-        sql: "UPDATE golden_rules SET hit_count = hit_count + 1 WHERE id = ?",
-        args: [id],
-      });
+    // Update hit counts in all databases where the rule exists
+    for (const db of clients) {
+      for (const id of ruleIds) {
+        await db.execute({
+          sql: "UPDATE golden_rules SET hit_count = hit_count + 1 WHERE id = ?",
+          args: [id],
+        });
+      }
     }
   }
 
@@ -202,7 +291,8 @@ export class QueryService {
     if (context.goldenRules.length > 0) {
       parts.push("\nGolden Rules:");
       for (const rule of context.goldenRules) {
-        parts.push(`- ${rule.content}`);
+        const scopeTag = rule.scope === "project" ? " [project]" : "";
+        parts.push(`- ${rule.content}${scopeTag}`);
       }
     }
     
@@ -210,14 +300,16 @@ export class QueryService {
       parts.push("\nRelevant Past Experiences:");
       for (const { item, score } of context.relevantLearnings) {
         const emoji = item.category === 'success' ? '✓' : '✗';
-        parts.push(`${emoji} [${(score * 100).toFixed(0)}%] ${item.content}`);
+        const scopeTag = item.scope === "project" ? " [project]" : "";
+        parts.push(`${emoji} [${(score * 100).toFixed(0)}%] ${item.content}${scopeTag}`);
       }
     }
     
     if (context.heuristics.length > 0) {
       parts.push("\nApplicable Heuristics:");
       for (const heuristic of context.heuristics) {
-        parts.push(`- ${heuristic.suggestion}`);
+        const scopeTag = heuristic.scope === "project" ? " [project]" : "";
+        parts.push(`- ${heuristic.suggestion}${scopeTag}`);
       }
     }
     
@@ -225,4 +317,5 @@ export class QueryService {
   }
 }
 
+// Create default instance with current working directory
 export const queryService = new QueryService();

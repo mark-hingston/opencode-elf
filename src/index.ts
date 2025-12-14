@@ -1,9 +1,10 @@
 import { initDatabase, isDatabaseEmpty, seedGoldenRules, seedHeuristics, getDbClient } from "./db/client.js";
 import { embeddingService } from "./services/embeddings.js";
-import { queryService } from "./services/query.js";
+import { QueryService } from "./services/query.js";
 import { metricsService } from "./services/metrics.js";
 import type { Plugin, PluginInput } from "@opencode-ai/plugin";
 import { createHash } from "node:crypto";
+import { getDbPaths, GLOBAL_DB_PATH } from "./config.js";
 
 // @ts-ignore - tool is exported at runtime but TypeScript doesn't see it
 import { tool } from "@opencode-ai/plugin";
@@ -17,28 +18,40 @@ export const ELFPlugin: Plugin = async ({ directory }: PluginInput) => {
   // Track if initialization is complete
   let initialized = false;
   
+  // Create query service with working directory
+  const queryService = new QueryService(directory);
+  
   async function initialize() {
     if (initialized) return;
     
     console.log("ELF: Initializing plugin...");
     
     try {
-      // Initialize database
-      await initDatabase();
-      console.log("ELF: Database initialized");
+      // Get database paths
+      const paths = getDbPaths(directory);
+      
+      // Initialize global database (always)
+      await initDatabase(GLOBAL_DB_PATH);
+      console.log("ELF: Global database initialized");
+      
+      // Initialize project database if available
+      if (paths.project) {
+        await initDatabase(paths.project);
+        console.log(`ELF: Project database initialized at ${paths.project}`);
+      }
       
       // Pre-load embedding model
       await embeddingService.init();
       console.log("ELF: Embedding model loaded");
       
-      // Check if this is first run (empty database)
-      const isEmpty = await isDatabaseEmpty();
+      // Check if global database is empty and seed if needed
+      const isEmpty = await isDatabaseEmpty(GLOBAL_DB_PATH);
       if (isEmpty) {
         console.log("ELF: First run detected - seeding default data...");
         
-        // Seed default golden rules and heuristics
+        // Seed default golden rules and heuristics (global only)
         await seedGoldenRules(queryService.addGoldenRule.bind(queryService));
-        await seedHeuristics();
+        await seedHeuristics(GLOBAL_DB_PATH);
         
         console.log("ELF: Default data seeded successfully");
       }
@@ -163,12 +176,14 @@ export const ELFPlugin: Plugin = async ({ directory }: PluginInput) => {
         description: `Manage and query the ELF (Emergent Learning Framework) memory system.
 
 Modes:
-- list-rules: List all golden rules
-- list-heuristics: List all heuristics
-- list-learnings: List recent learnings (optional limit parameter)
-- add-rule: Add a new golden rule (requires content parameter)
-- add-heuristic: Add a new heuristic (requires pattern and suggestion parameters)
-- metrics: View performance metrics`,
+- list-rules: List all golden rules (optional scope parameter)
+- list-heuristics: List all heuristics (optional scope parameter)
+- list-learnings: List recent learnings (optional limit and scope parameters)
+- add-rule: Add a new golden rule (requires content parameter, optional scope)
+- add-heuristic: Add a new heuristic (requires pattern and suggestion parameters, optional scope)
+- metrics: View performance metrics
+
+Scope can be "global" or "project". Defaults to "global" for add operations and "all" for list operations.`,
         args: {
           mode: tool.schema.enum([
             "list-rules",
@@ -182,6 +197,7 @@ Modes:
           pattern: tool.schema.string().optional(),
           suggestion: tool.schema.string().optional(),
           limit: tool.schema.number().optional(),
+          scope: tool.schema.enum(["global", "project"]).optional(),
         },
         async execute(args: {
           mode: string;
@@ -189,63 +205,121 @@ Modes:
           pattern?: string;
           suggestion?: string;
           limit?: number;
+          scope?: "global" | "project";
         }) {
           // Ensure initialized
           if (!initialized) {
             await initialize();
           }
 
-          const db = getDbClient();
+          const paths = getDbPaths(directory);
 
           try {
             switch (args.mode) {
               case "list-rules": {
-                const result = await db.execute(
-                  "SELECT id, content, hit_count, created_at FROM golden_rules ORDER BY hit_count DESC"
-                );
+                const scope = args.scope;
+                const clients = scope === "global" 
+                  ? [getDbClient(GLOBAL_DB_PATH)]
+                  : scope === "project" && paths.project
+                    ? [getDbClient(paths.project)]
+                    : [getDbClient(GLOBAL_DB_PATH), ...(paths.project ? [getDbClient(paths.project)] : [])];
+                
+                const allRules: Array<{ id: string; content: string; hitCount: number; created: string; scope: string }> = [];
+                
+                for (let i = 0; i < clients.length; i++) {
+                  const db = clients[i];
+                  const dbScope = (scope || (i === 0 ? "global" : "project")) as string;
+                  
+                  const result = await db.execute(
+                    "SELECT id, content, hit_count, created_at FROM golden_rules ORDER BY hit_count DESC"
+                  );
+                  
+                  allRules.push(...result.rows.map(r => ({
+                    id: r.id as string,
+                    content: r.content as string,
+                    hitCount: r.hit_count as number,
+                    created: new Date(r.created_at as number).toISOString(),
+                    scope: dbScope,
+                  })));
+                }
+                
                 return JSON.stringify({
                   success: true,
-                  rules: result.rows.map(r => ({
-                    id: r.id,
-                    content: r.content,
-                    hitCount: r.hit_count,
-                    created: new Date(r.created_at as number).toISOString(),
-                  })),
-                  count: result.rows.length,
+                  rules: allRules,
+                  count: allRules.length,
                 });
               }
 
               case "list-heuristics": {
-                const result = await db.execute(
-                  "SELECT id, pattern, suggestion, created_at FROM heuristics ORDER BY created_at DESC"
-                );
+                const scope = args.scope;
+                const clients = scope === "global" 
+                  ? [getDbClient(GLOBAL_DB_PATH)]
+                  : scope === "project" && paths.project
+                    ? [getDbClient(paths.project)]
+                    : [getDbClient(GLOBAL_DB_PATH), ...(paths.project ? [getDbClient(paths.project)] : [])];
+                
+                const allHeuristics: Array<{ id: string; pattern: string; suggestion: string; created: string; scope: string }> = [];
+                
+                for (let i = 0; i < clients.length; i++) {
+                  const db = clients[i];
+                  const dbScope = (scope || (i === 0 ? "global" : "project")) as string;
+                  
+                  const result = await db.execute(
+                    "SELECT id, pattern, suggestion, created_at FROM heuristics ORDER BY created_at DESC"
+                  );
+                  
+                  allHeuristics.push(...result.rows.map(r => ({
+                    id: r.id as string,
+                    pattern: r.pattern as string,
+                    suggestion: r.suggestion as string,
+                    created: new Date(r.created_at as number).toISOString(),
+                    scope: dbScope,
+                  })));
+                }
+                
                 return JSON.stringify({
                   success: true,
-                  heuristics: result.rows.map(r => ({
-                    id: r.id,
-                    pattern: r.pattern,
-                    suggestion: r.suggestion,
-                    created: new Date(r.created_at as number).toISOString(),
-                  })),
-                  count: result.rows.length,
+                  heuristics: allHeuristics,
+                  count: allHeuristics.length,
                 });
               }
 
               case "list-learnings": {
                 const limit = args.limit || 20;
-                const result = await db.execute({
-                  sql: "SELECT id, category, content, created_at FROM learnings ORDER BY created_at DESC LIMIT ?",
-                  args: [limit],
-                });
+                const scope = args.scope;
+                const clients = scope === "global" 
+                  ? [getDbClient(GLOBAL_DB_PATH)]
+                  : scope === "project" && paths.project
+                    ? [getDbClient(paths.project)]
+                    : [getDbClient(GLOBAL_DB_PATH), ...(paths.project ? [getDbClient(paths.project)] : [])];
+                
+                const allLearnings: Array<{ id: string; category: string; content: string; created: string; scope: string }> = [];
+                
+                for (let i = 0; i < clients.length; i++) {
+                  const db = clients[i];
+                  const dbScope = (scope || (i === 0 ? "global" : "project")) as string;
+                  
+                  const result = await db.execute({
+                    sql: "SELECT id, category, content, created_at FROM learnings ORDER BY created_at DESC LIMIT ?",
+                    args: [limit],
+                  });
+                  
+                  allLearnings.push(...result.rows.map(r => ({
+                    id: r.id as string,
+                    category: r.category as string,
+                    content: r.content as string,
+                    created: new Date(r.created_at as number).toISOString(),
+                    scope: dbScope,
+                  })));
+                }
+                
+                // Sort all learnings by creation date
+                allLearnings.sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime());
+                
                 return JSON.stringify({
                   success: true,
-                  learnings: result.rows.map(r => ({
-                    id: r.id,
-                    category: r.category,
-                    content: r.content,
-                    created: new Date(r.created_at as number).toISOString(),
-                  })),
-                  count: result.rows.length,
+                  learnings: allLearnings.slice(0, limit),
+                  count: allLearnings.length,
                 });
               }
 
@@ -256,11 +330,15 @@ Modes:
                     error: "content parameter is required for add-rule mode",
                   });
                 }
-                await queryService.addGoldenRule(args.content);
+                
+                const scope = args.scope || "global";
+                await queryService.addGoldenRule(args.content, scope);
+                
                 return JSON.stringify({
                   success: true,
-                  message: "Golden rule added successfully",
+                  message: `Golden rule added successfully to ${scope} scope`,
                   content: args.content,
+                  scope,
                 });
               }
 
@@ -271,6 +349,10 @@ Modes:
                     error: "pattern and suggestion parameters are required for add-heuristic mode",
                   });
                 }
+                
+                const scope = args.scope || "global";
+                const dbPath = scope === "project" && paths.project ? paths.project : GLOBAL_DB_PATH;
+                const db = getDbClient(dbPath);
                 
                 const id = createHash('sha256')
                   .update(args.pattern + args.suggestion)
@@ -285,13 +367,15 @@ Modes:
                 
                 return JSON.stringify({
                   success: true,
-                  message: "Heuristic added successfully",
+                  message: `Heuristic added successfully to ${scope} scope`,
                   pattern: args.pattern,
                   suggestion: args.suggestion,
+                  scope,
                 });
               }
 
               case "metrics": {
+                const db = getDbClient(GLOBAL_DB_PATH);
                 const result = await db.execute(
                   "SELECT type, COUNT(*) as count, AVG(value) as avg_value, MIN(value) as min_value, MAX(value) as max_value FROM metrics GROUP BY type ORDER BY type"
                 );

@@ -1,4 +1,5 @@
 export type Embedding = number[];
+export type MemoryScope = "global" | "project";
 
 export interface GoldenRule {
   id: string;
@@ -6,6 +7,7 @@ export interface GoldenRule {
   embedding: Embedding;
   created_at: number;
   hit_count: number;
+  scope?: MemoryScope; // Added for tracking where the rule came from
 }
 
 export interface Learning {
@@ -15,6 +17,7 @@ export interface Learning {
   embedding: Embedding;
   created_at: number;
   context_hash: string; // Hash of the tool output/error for deduplication
+  scope?: MemoryScope; // Added for tracking where the learning came from
 }
 
 export interface Heuristic {
@@ -22,6 +25,7 @@ export interface Heuristic {
   pattern: string; // Regex or keyword pattern
   suggestion: string;
   created_at: number;
+  scope?: MemoryScope; // Added for tracking where the heuristic came from
 }
 
 export interface SearchResult<T> {

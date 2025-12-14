@@ -1,6 +1,6 @@
 {
   "name": "opencode-elf",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Emergent Learning Framework (ELF) plugin for OpenCode - Learn from past successes and failures with hybrid global/project storage",
   "type": "module",
   "main": "dist/index.js",

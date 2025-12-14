@@ -1,6 +1,7 @@
 import { initDatabase } from "./db/client";
 import { embeddingService } from "./services/embeddings";
 import { queryService } from "./services/query";
+import { metricsService } from "./services/metrics";
 
 // Track if initialization is complete
 let initialized = false;
@@ -31,6 +32,8 @@ async function initialize() {
  * Chat params hook - Inject ELF context before the LLM processes the message
  */
 export async function chatParams(params: Record<string, unknown>) {
+  const start = Date.now(); // Start timer for metrics
+  
   try {
     await initialize();
     
@@ -59,11 +62,20 @@ export async function chatParams(params: Record<string, unknown>) {
       
       // Inject into system prompt or prepend to user message
       const systemPrompt = input?.systemPrompt as string | undefined;
-      if (systemPrompt) {
+      if (systemPrompt && input) {
         input.systemPrompt = `${systemPrompt}\n\n${elfMemory}`;
-      } else {
+      } else if (message) {
         message.text = `${elfMemory}\n\n${userMessage}`;
       }
+      
+      // Record metrics - injection happened
+      const duration = Date.now() - start;
+      metricsService.record('latency', duration);
+      metricsService.record('injection', 1, {
+        rules: context.goldenRules.length,
+        learnings: context.relevantLearnings.length,
+        heuristics: context.heuristics.length
+      });
     }
     
     return params;
@@ -105,6 +117,9 @@ export async function event(eventData: Record<string, unknown>) {
         'failure',
         JSON.stringify(result)
       );
+      
+      // Record metrics - failure learned
+      metricsService.record('learning_failure', 1, { tool });
       
       console.log("ELF: Recorded failure learning");
     } else {

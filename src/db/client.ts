@@ -49,7 +49,18 @@ export async function initDatabase(): Promise<void> {
       pattern TEXT NOT NULL,
       suggestion TEXT NOT NULL,
       created_at INTEGER NOT NULL
-    );`
+    );`,
+
+    `CREATE TABLE IF NOT EXISTS metrics (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      value REAL NOT NULL,
+      meta TEXT,
+      created_at INTEGER NOT NULL
+    );`,
+    
+    "CREATE INDEX IF NOT EXISTS idx_metrics_type ON metrics(type);",
+    "CREATE INDEX IF NOT EXISTS idx_metrics_created_at ON metrics(created_at);"
   ];
 
   for (const query of queries) {

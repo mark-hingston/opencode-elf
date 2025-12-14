@@ -7,7 +7,16 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "rules:add": "node scripts/manage-rules.js add",
+    "rules:list": "node scripts/manage-rules.js list",
+    "rules:seed": "node scripts/seed-rules.js",
+    "heuristics:add": "node scripts/manage-heuristics.js add",
+    "heuristics:list": "node scripts/manage-heuristics.js list",
+    "heuristics:seed": "node scripts/seed-heuristics.js",
+    "learnings:view": "node scripts/view-learnings.js",
+    "metrics:view": "node scripts/view-metrics.js",
+    "test:simulate": "ts-node tests/simulate.ts"
   },
   "keywords": [
     "opencode",
@@ -29,6 +38,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.5",
+    "ts-node": "^10.9.2",
     "typescript": "^5.3.3"
   },
   "opencode": {

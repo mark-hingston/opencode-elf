@@ -19,7 +19,7 @@ Add to your OpenCode config:
 ```jsonc
 // opencode.jsonc
 {
-  "plugin": ["@opencode-elf/opencode-elf@latest"]
+  "plugin": ["opencode-elf@latest"]
 }
 ```
 

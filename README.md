@@ -60,6 +60,13 @@ Restart OpenCode. The plugin will automatically load.
 │              OpenCode ELF Plugin                     │
 ├──────────────────────────────────────────────────────┤
 │                                                      │
+│  Initialization: LAZY LOADING                        │
+│  ┌────────────────────────────────────────────────┐  │
+│  │ Background: DB init + Model load + Seeding     │  │
+│  │ Returns hooks immediately (non-blocking)       │  │
+│  │ First interaction waits for init completion    │  │
+│  └────────────────────────────────────────────────┘  │
+│                                                      │
 │  Hooks:                                              │
 │  ┌─────────────────┐      ┌────────────────────┐     │
 │  │  chat.params    │─────▶│ Context Injection  │     │
@@ -146,27 +153,26 @@ The plugin provides an `elf` tool that agents can invoke to manage memory:
 
 ### 1. Installation & First Run
 
-After installing the plugin, restart OpenCode. The plugin will automatically:
-- Initialize the database
-- Load the embedding model (~90MB download on first run)
-- Seed 10 default golden rules
-- Seed 10 default heuristics
+After installing the plugin, restart OpenCode. The plugin uses **lazy loading** for fast startup:
+
+**What happens:**
+- OpenCode starts immediately (plugin loads in background)
+- Database initialization happens asynchronously
+- Embedding model loads in background (~90MB download on first run)
+- Default data seeding occurs if needed (first run only)
 
 You'll see output like:
 ```
-ELF: Initializing plugin...
-ELF: Database initialized
-ELF: Embedding model loaded
-ELF: First run detected - seeding default data...
-ELF: Seeding default golden rules...
-ELF: Added 10 default golden rules
-ELF: Seeding default heuristics...
-ELF: Added 10 default heuristics
-ELF: Default data seeded successfully
-ELF: Plugin ready
+ELF: Initializing in background...
+ELF: Ready (took 2847ms)
 ```
 
-The plugin is now ready to use! No manual setup required.
+**First interaction timing:**
+- Your first message will wait for initialization to complete (1-3 seconds)
+- Subsequent messages are instant (no waiting)
+- This moves the "loading time" from startup to first use
+
+The plugin is ready to use! No manual setup required.
 
 ### 2. Verify Installation (Optional)
 
@@ -495,19 +501,24 @@ Database is stored at: `~/.opencode/elf/memory.db`
 To reset: `rm -rf ~/.opencode/elf/`
 
 ### Performance Issues
-Expected performance (after model is loaded):
 
-| Operation | Time |
-|-----------|------|
-| Add golden rule | ~50-100ms |
-| Query context | ~200-500ms |
-| Record learning | ~100-200ms |
-| Embedding generation | ~50-150ms |
+Expected performance (lazy loading enabled):
 
-If performance is slower, check:
-- Model is loaded (check logs)
+| Operation | First Run | Subsequent Runs |
+|-----------|-----------|-----------------|
+| Plugin startup | Returns immediately | Instant |
+| First message | 1-3s (waits for init) | ~200-500ms |
+| Context query | ~200-500ms | ~200-500ms |
+| Add golden rule | ~50-100ms | ~50-100ms |
+| Record learning | ~100-200ms | ~100-200ms |
+
+**Note:** With lazy loading, OpenCode starts immediately. Initialization happens in the background, so only your first interaction waits for the model to load.
+
+If performance is slower than expected, check:
+- Model is loaded (check logs for "ELF: Ready")
 - Database isn't locked
-- Sufficient disk space for embeddings cache
+- Sufficient disk space for embeddings cache (~90MB)
+- First message timing is expected (includes initialization)
 
 ## Roadmap
 

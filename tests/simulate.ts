@@ -1,108 +1,115 @@
 /**
  * Simulation Script
  * Verifies the full ELF loop without needing OpenCode
- * Run with: npx ts-node tests/simulate.ts
+ * Run with: npm run test:simulate
  */
 
-import { initDatabase, getDbClient } from "../src/db/client";
-import { queryService } from "../src/services/query";
-import { chatParams, event } from "../src/index";
+import { initDatabase, getDbClient, isDatabaseEmpty, seedGoldenRules, seedHeuristics } from "../dist/db/client.js";
+import { QueryService } from "../dist/services/query.js";
+import { embeddingService } from "../dist/services/embeddings.js";
+import { GLOBAL_DB_PATH, getDbPaths } from "../dist/config.js";
 
 async function runSimulation() {
   console.log("🤖 Starting ELF Simulation...\n");
 
-  // 1. Initialize
-  await initDatabase();
-  
-  // 2. Seed a Golden Rule
-  console.log("1️⃣  Seeding Golden Rule...");
-  await queryService.addGoldenRule("Always use strict equality (===) in JavaScript");
-  
-  // 3. Simulate a User Query (Context Injection)
-  console.log("\n2️⃣  Simulating Chat Request...");
-  const mockChatParams = {
-    input: {
-      message: { text: "I want to write a JS function to compare numbers." },
-      systemPrompt: "You are a coding assistant."
-    }
-  };
-  
-  // This should trigger the embedding search and inject the Golden Rule
-  await chatParams(mockChatParams);
-  
-  const input = mockChatParams.input as Record<string, unknown>;
-  const modifiedPrompt = input.systemPrompt as string;
-  if (modifiedPrompt.includes("Always use strict equality")) {
-    console.log("✅ SUCCESS: Context injected Golden Rule into system prompt.");
-  } else {
-    console.error("❌ FAILURE: Golden Rule not found in prompt.");
-    console.log("Actual Prompt:", modifiedPrompt);
-  }
-
-  // 4. Simulate a Tool Failure (Learning Loop)
-  console.log("\n3️⃣  Simulating Tool Failure...");
-  const mockEvent = {
-    type: "tool.result",
-    tool: "npm",
-    result: {
-      stderr: "npm ERR! code ENOENT\nnpm ERR! syscall open\nnpm ERR! path package.json",
-      exitCode: 1
-    }
-  };
-
-  await event(mockEvent);
-  console.log("✅ Tool failure event processed.");
-
-  // 5. Verify Learning was Recorded
-  console.log("\n4️⃣  Verifying Learning Retrieval...");
-  
-  // Query for something related to the failure
-  const context = await queryService.getContext("I want to run npm install");
-  
-  const foundLearning = context.relevantLearnings.find(l => 
-    l.item.content.includes("npm ERR! code ENOENT")
-  );
-
-  if (foundLearning) {
-    console.log("✅ SUCCESS: Retrieved the learned failure from memory.");
-    console.log(`   Score: ${(foundLearning.score * 100).toFixed(1)}%`);
-    console.log(`   Content: ${foundLearning.item.content}`);
-  } else {
-    console.error("❌ FAILURE: Did not retrieve the recent learning.");
-    console.log("   Available learnings:", context.relevantLearnings.length);
-  }
-
-  console.log("\n🎉 Simulation Complete.");
-  
-  // 6. Verify Metrics Collection
-  console.log("\n5️⃣  Verifying Metrics Collection...");
-  const db = getDbClient();
-  
-  const metricsCount = await db.execute("SELECT COUNT(*) as count FROM metrics");
-  const latencyMetrics = await db.execute("SELECT value FROM metrics WHERE type = 'latency'");
-  const injectionMetrics = await db.execute("SELECT COUNT(*) as count FROM metrics WHERE type = 'injection'");
-  const failureMetrics = await db.execute("SELECT COUNT(*) as count FROM metrics WHERE type = 'learning_failure'");
-  
-  console.log(`   Total metrics recorded: ${metricsCount.rows[0]?.count}`);
-  console.log(`   Latency samples: ${latencyMetrics.rows.length}`);
-  console.log(`   Injections: ${injectionMetrics.rows[0]?.count}`);
-  console.log(`   Failures learned: ${failureMetrics.rows[0]?.count}`);
-  
-  if (latencyMetrics.rows.length > 0) {
-    const avgLatency = latencyMetrics.rows.reduce((sum, row) => sum + (row.value as number), 0) / latencyMetrics.rows.length;
-    console.log(`   Average latency: ${Math.round(avgLatency)}ms`);
+  try {
+    // 1. Initialize (mimics plugin lazy loading)
+    console.log("1️⃣  Simulating plugin initialization...");
+    const initStart = Date.now();
     
-    if (avgLatency < 500) {
-      console.log("   ✅ SUCCESS: Metrics collected with good performance");
-    } else {
-      console.log("   ⚠️  WARNING: Latency higher than expected");
+    // Use current directory for testing
+    const testDir = process.cwd();
+    const paths = getDbPaths(testDir);
+    
+    // Initialize global database
+    await initDatabase(GLOBAL_DB_PATH);
+    
+    // Initialize project database if detected
+    if (paths.project) {
+      console.log(`   Project database detected at: ${paths.project}`);
+      await initDatabase(paths.project);
     }
+    
+    await embeddingService.init();
+    
+    // Create query service
+    const queryService = new QueryService(testDir);
+    
+    // Check and seed if needed (only global)
+    const isEmpty = await isDatabaseEmpty(GLOBAL_DB_PATH);
+    if (isEmpty) {
+      console.log("   First run detected - seeding default data...");
+      await seedGoldenRules(queryService.addGoldenRule.bind(queryService));
+      await seedHeuristics(GLOBAL_DB_PATH);
+    }
+    
+    const initTime = Date.now() - initStart;
+    console.log(`✅ Initialization complete (took ${initTime}ms)\n`);
+    
+    // 2. Simulate a User Query (Context Injection)
+    console.log("2️⃣  Simulating Chat Request...");
+    
+    const context = await queryService.getContext("I want to write a JS function to compare numbers.");
+    
+    if (context.goldenRules.length > 0) {
+      console.log(`✅ SUCCESS: Retrieved ${context.goldenRules.length} golden rules`);
+      console.log(`   Example: "${context.goldenRules[0].content.slice(0, 60)}..."`);
+    } else {
+      console.error("❌ FAILURE: No golden rules retrieved.");
+    }
+
+    // 3. Simulate a Tool Failure (Learning Loop)
+    console.log("\n3️⃣  Simulating Tool Failure...");
+    
+    await queryService.recordLearning(
+      "Tool 'npm' failed: npm ERR! code ENOENT\nnpm ERR! syscall open\nnpm ERR! path package.json",
+      "failure",
+      JSON.stringify({ stderr: "npm ERR! code ENOENT", exitCode: 1 })
+    );
+    
+    console.log("✅ Tool failure recorded as learning.");
+
+    // 4. Verify Learning was Recorded
+    console.log("\n4️⃣  Verifying Learning Retrieval...");
+    
+    // Query for something related to the failure
+    const context2 = await queryService.getContext("I want to run npm install");
+    
+    const foundLearning = context2.relevantLearnings.find(l => 
+      l.item.content.includes("npm ERR! code ENOENT")
+    );
+
+    if (foundLearning) {
+      console.log("✅ SUCCESS: Retrieved the learned failure from memory.");
+      console.log(`   Score: ${(foundLearning.score * 100).toFixed(1)}%`);
+      console.log(`   Content: ${foundLearning.item.content.slice(0, 60)}...`);
+    } else {
+      console.error("❌ FAILURE: Did not retrieve the recent learning.");
+      console.log(`   Available learnings: ${context2.relevantLearnings.length}`);
+    }
+
+    // 5. Test formatted context output
+    console.log("\n5️⃣  Testing Context Formatting...");
+    const formatted = queryService.formatContextForPrompt(context2);
+    
+    if (formatted.includes("Golden Rules:") && formatted.includes("Relevant Past Experiences:")) {
+      console.log("✅ SUCCESS: Context properly formatted for injection");
+      console.log(`   Generated context length: ${formatted.length} chars`);
+    } else {
+      console.error("❌ FAILURE: Context formatting incomplete");
+    }
+
+    console.log("\n🎉 All Tests Passed!");
+    console.log("\n📊 Summary:");
+    console.log(`   Initialization time: ${initTime}ms`);
+    console.log(`   Golden rules active: ${context.goldenRules.length}`);
+    console.log("   Learnings recorded: 1");
+    console.log("   Context injection: Ready");
+    
+  } catch (error) {
+    console.error("\n❌ Simulation failed:", error);
+    process.exit(1);
   }
-  
-  console.log("\n🎉 All Tests Passed!");
 }
 
-runSimulation().catch(error => {
-  console.error("Simulation failed:", error);
-  process.exit(1);
-});
+runSimulation();

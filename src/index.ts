@@ -15,16 +15,16 @@ import { tool } from "@opencode-ai/plugin";
  * Emergent Learning Framework - Learns from past successes and failures
  */
 export const ELFPlugin: Plugin = async ({ directory }: PluginInput) => {
-  // Track if initialization is complete
-  let initialized = false;
-  
   // Create query service with working directory
   const queryService = new QueryService(directory);
   
-  async function initialize() {
-    if (initialized) return;
-    
-    console.log("ELF: Initializing plugin...");
+  // Track initialization state
+  let initError: Error | null = null;
+  
+  // 1. Start initialization in the background (do not await here)
+  const initPromise = (async () => {
+    console.log("ELF: Initializing in background...");
+    const start = Date.now();
     
     try {
       // Get database paths
@@ -32,50 +32,48 @@ export const ELFPlugin: Plugin = async ({ directory }: PluginInput) => {
       
       // Initialize global database (always)
       await initDatabase(GLOBAL_DB_PATH);
-      console.log("ELF: Global database initialized");
       
       // Initialize project database if available
       if (paths.project) {
         await initDatabase(paths.project);
-        console.log(`ELF: Project database initialized at ${paths.project}`);
       }
       
-      // Pre-load embedding model
+      // Pre-load embedding model (This is the heavy part)
       await embeddingService.init();
-      console.log("ELF: Embedding model loaded");
       
       // Check if global database is empty and seed if needed
       const isEmpty = await isDatabaseEmpty(GLOBAL_DB_PATH);
       if (isEmpty) {
         console.log("ELF: First run detected - seeding default data...");
-        
-        // Seed default golden rules and heuristics (global only)
         await seedGoldenRules(queryService.addGoldenRule.bind(queryService));
         await seedHeuristics(GLOBAL_DB_PATH);
-        
-        console.log("ELF: Default data seeded successfully");
       }
       
-      initialized = true;
-      console.log("ELF: Plugin ready");
+      console.log(`ELF: Ready (took ${Date.now() - start}ms)`);
     } catch (error) {
-      console.error("ELF: Initialization failed", error);
+      console.error("ELF: Background initialization failed", error);
+      initError = error instanceof Error ? error : new Error(String(error));
       throw error;
     }
-  }
+  })();
 
-  // Initialize immediately
-  await initialize();
+  // 2. Helper to ensure we are ready before processing hooks
+  const ensureReady = async () => {
+    if (initError) throw initError;
+    await initPromise;
+  };
 
+  // 3. Return hooks immediately
   return {
     /**
      * Chat params hook - Inject ELF context before the LLM processes the message
      */
     "chat.params": async (params: Record<string, unknown>) => {
-      const start = Date.now(); // Start timer for metrics
+      const start = Date.now();
       
       try {
-        await initialize();
+        // Wait for init to finish (only affects the very first message)
+        await ensureReady();
         
         const input = params.input as Record<string, unknown> | undefined;
         const message = input?.message as Record<string, unknown> | undefined;
@@ -108,82 +106,67 @@ export const ELFPlugin: Plugin = async ({ directory }: PluginInput) => {
             message.text = `${elfMemory}\n\n${userMessage}`;
           }
           
-          // Record metrics - injection happened
-          const duration = Date.now() - start;
-          metricsService.record('latency', duration);
-          metricsService.record('injection', 1, {
-            rules: context.goldenRules.length,
-            learnings: context.relevantLearnings.length,
-            heuristics: context.heuristics.length
-          });
-        }
-      } catch (error) {
-        console.error("ELF: Error in chat.params hook", error);
-        // Don't throw - we don't want to break the chat
+        // Record metrics
+        const duration = Date.now() - start;
+        metricsService.record('latency', duration);
+        metricsService.record('injection', 1, {
+          rules: context.goldenRules.length,
+          learnings: context.relevantLearnings.length,
+          heuristics: context.heuristics.length
+        });
       }
-    },
+    } catch (error) {
+      // Fail open: If ELF fails, log it but don't break the user's chat
+      console.error("ELF: Error in chat.params hook", error);
+    }
+  },
 
-    /**
-     * Event hook - Learn from tool executions
-     */
-    event: async ({ event }) => {
-      try {
-        await initialize();
+  /**
+   * Event hook - Learn from tool executions
+   */
+  event: async ({ event }) => {
+    try {
+      // We can process events even if init is still running, 
+      // but we need the DB ready to record learnings.
+      await ensureReady();
+      
+      // @ts-ignore
+      if (event.type !== "tool.execute.after") return;
+      
+      const toolName = (event as unknown as { tool: string }).tool;
+      const result = (event as unknown as { result: Record<string, unknown> }).result;
+      
+      if (!result || !toolName) return;
+      
+      const stderr = result.stderr as string | undefined;
+      const error = result.error as string | undefined;
+      const exitCode = result.exitCode as number | undefined;
+      const hasError = stderr || error || (exitCode !== undefined && exitCode !== 0);
+      
+      if (hasError) {
+        const errorContent = stderr || error || "Command failed";
+        const learningContent = `Tool '${toolName}' failed: ${errorContent}`;
         
-        // Only process tool result events
-        // @ts-ignore - tool.execute.after is a valid event type
-        if (event.type !== "tool.execute.after") return;
+        await queryService.recordLearning(
+          learningContent,
+          'failure',
+          JSON.stringify(result)
+        );
         
-        const toolName = (event as unknown as { tool: string }).tool;
-        const result = (event as unknown as { result: Record<string, unknown> }).result;
-        
-        // Skip if no result or tool name
-        if (!result || !toolName) return;
-        
-        // Detect failures (stderr, error codes, exceptions)
-        const stderr = result.stderr as string | undefined;
-        const error = result.error as string | undefined;
-        const exitCode = result.exitCode as number | undefined;
-        const hasError = stderr || error || (exitCode !== undefined && exitCode !== 0);
-        
-        if (hasError) {
-          // Record failure
-          const errorContent = stderr || error || "Command failed";
-          const learningContent = `Tool '${toolName}' failed: ${errorContent}`;
-          
-          await queryService.recordLearning(
-            learningContent,
-            'failure',
-            JSON.stringify(result)
-          );
-          
-          // Record metrics - failure learned
-          metricsService.record('learning_failure', 1, { tool: toolName });
-          
-          console.log("ELF: Recorded failure learning");
-        }
-      } catch (error) {
-        console.error("ELF: Error in event hook", error);
-        // Don't throw - we don't want to break the system
+        metricsService.record('learning_failure', 1, { tool: toolName });
+        console.log("ELF: Recorded failure learning");
       }
-    },
+    } catch (error) {
+      console.error("ELF: Error in event hook", error);
+    }
+  },
 
-    /**
-     * ELF tool for agent use
-     */
-    tool: {
-      elf: tool({
-        description: `Manage and query the ELF (Emergent Learning Framework) memory system.
-
-Modes:
-- list-rules: List all golden rules (optional scope parameter)
-- list-heuristics: List all heuristics (optional scope parameter)
-- list-learnings: List recent learnings (optional limit and scope parameters)
-- add-rule: Add a new golden rule (requires content parameter, optional scope)
-- add-heuristic: Add a new heuristic (requires pattern and suggestion parameters, optional scope)
-- metrics: View performance metrics
-
-Scope can be "global" or "project". Defaults to "global" for add operations and "all" for list operations.`,
+  /**
+   * ELF tool for agent use
+   */
+  tool: {
+    elf: tool({
+      description: "Manage and query the ELF (Emergent Learning Framework) memory system.",
         args: {
           mode: tool.schema.enum([
             "list-rules",
@@ -199,20 +182,18 @@ Scope can be "global" or "project". Defaults to "global" for add operations and 
           limit: tool.schema.number().optional(),
           scope: tool.schema.enum(["global", "project"]).optional(),
         },
-        async execute(args: {
-          mode: string;
-          content?: string;
-          pattern?: string;
-          suggestion?: string;
-          limit?: number;
-          scope?: "global" | "project";
-        }) {
-          // Ensure initialized
-          if (!initialized) {
-            await initialize();
-          }
+      async execute(args: {
+        mode: string;
+        content?: string;
+        pattern?: string;
+        suggestion?: string;
+        limit?: number;
+        scope?: "global" | "project";
+      }) {
+        // Tool execution MUST wait for initialization
+        await ensureReady();
 
-          const paths = getDbPaths(directory);
+        const paths = getDbPaths(directory);
 
           try {
             switch (args.mode) {

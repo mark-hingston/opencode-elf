@@ -1,12 +1,15 @@
 import { getDbClient, getDbClients } from "../db/client.js";
 import { embeddingService } from "./embeddings.js";
 import type { GoldenRule, Learning, Heuristic, SearchResult, ELFContext, MemoryScope } from "../types/elf.js";
-import { MAX_GOLDEN_RULES, MAX_RELEVANT_LEARNINGS, SIMILARITY_THRESHOLD, getDbPaths } from "../config.js";
+import { MAX_GOLDEN_RULES, MAX_RELEVANT_LEARNINGS, SIMILARITY_THRESHOLD, getDbPaths, AUTO_CLEANUP_ENABLED } from "../config.js";
 import { createHash } from "node:crypto";
 import type { Client } from "@libsql/client";
+import { cleanupExpiredData } from "./cleanup.js";
 
 export class QueryService {
   private workingDirectory: string;
+  private lastCleanupTime = 0;
+  private readonly CLEANUP_INTERVAL = 24 * 60 * 60 * 1000; // Run cleanup once per day
 
   constructor(workingDirectory?: string) {
     this.workingDirectory = workingDirectory || process.cwd();
@@ -17,6 +20,26 @@ export class QueryService {
    */
   setWorkingDirectory(directory: string): void {
     this.workingDirectory = directory;
+  }
+
+  /**
+   * Run cleanup if auto-cleanup is enabled and enough time has passed
+   */
+  private async maybeRunCleanup(): Promise<void> {
+    if (!AUTO_CLEANUP_ENABLED) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - this.lastCleanupTime < this.CLEANUP_INTERVAL) {
+      return; // Cleanup already ran recently
+    }
+
+    this.lastCleanupTime = now;
+
+    // Run cleanup on all active databases
+    const { clients } = this.getClients();
+    await Promise.all(clients.map(db => cleanupExpiredData(db)));
   }
 
   /**
@@ -38,6 +61,9 @@ export class QueryService {
    * Get relevant context for a given user prompt
    */
   async getContext(prompt: string): Promise<ELFContext> {
+    // Run automatic cleanup if enabled and enough time has passed
+    await this.maybeRunCleanup();
+
     const [goldenRules, relevantLearnings, heuristics] = await Promise.all([
       this.getTopGoldenRules(),
       this.searchLearnings(prompt),

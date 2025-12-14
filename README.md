@@ -9,6 +9,7 @@
 - **Learnings**: Automatic recording of tool execution failures and successes  
 - **Context Injection**: Relevant past experiences are injected into each conversation  
 - **Hybrid Storage**: Support for both global and project-scoped memories  
+- **Automatic Cleanup**: Configurable expiration for unused rules and old learnings
 - **Local-First**: Uses local SQLite storage and local embeddings (no API calls)
 
 ## Key Features
@@ -36,6 +37,7 @@ ELF now supports both **global** and **project-scoped** memories:
 - Local embeddings with @xenova/transformers (no API calls)
 - All data stays on your machine
 - Works offline after initial model download (~90MB)
+- Automatic cleanup prevents database from growing indefinitely
 
 Example:
 ```
@@ -351,6 +353,37 @@ This shows:
 - Failures learned
 - Recent activity
 
+### Cleanup & Maintenance
+
+ELF includes automatic cleanup to prevent the database from growing indefinitely:
+
+**Automatic Cleanup (Default: Enabled)**
+- Runs once per day during normal operation
+- Deletes golden rules with 0 hits after 90 days
+- Deletes learnings older than 60 days
+- Deletes heuristics older than 180 days
+
+**Manual Cleanup:**
+```bash
+# Preview what would be deleted
+npm run cleanup:preview
+
+# Delete expired data
+npm run cleanup:clean
+```
+
+**Configuration:**
+Edit `src/config.ts` to customize expiration settings:
+```typescript
+export const RULE_EXPIRATION_DAYS = 90;        // Delete unused rules
+export const RULE_MIN_HITS_TO_KEEP = 1;        // Rules with < 1 hits
+export const LEARNING_EXPIRATION_DAYS = 60;    // Delete old learnings
+export const HEURISTIC_EXPIRATION_DAYS = 180;  // Delete old heuristics
+export const AUTO_CLEANUP_ENABLED = true;      // Enable/disable auto-cleanup
+```
+
+After editing config, rebuild with `npm run build`.
+
 ## Configuration
 
 The plugin can be configured by modifying `src/config.ts` and rebuilding:
@@ -368,6 +401,13 @@ export const EMBEDDING_MODEL = "Xenova/all-MiniLM-L6-v2";
 export const MAX_GOLDEN_RULES = 5;             // Max rules to inject per message
 export const MAX_RELEVANT_LEARNINGS = 10;      // Max learnings to inject
 export const SIMILARITY_THRESHOLD = 0.7;       // Min similarity for relevance
+
+// Expiration configuration (in days)
+export const RULE_EXPIRATION_DAYS = 90;        // Delete unused rules after 90 days
+export const RULE_MIN_HITS_TO_KEEP = 1;        // Rules with 0 hits are candidates
+export const LEARNING_EXPIRATION_DAYS = 60;    // Delete learnings after 60 days
+export const HEURISTIC_EXPIRATION_DAYS = 180;  // Delete heuristics after 180 days
+export const AUTO_CLEANUP_ENABLED = true;      // Enable automatic cleanup
 ```
 
 ### Database Location
@@ -450,13 +490,15 @@ opencode-elf/
 │   └── services/
 │       ├── embeddings.ts     # Vector embeddings
 │       ├── metrics.ts        # Performance tracking
-│       └── query.ts          # Context builder
+│       ├── query.ts          # Context builder
+│       └── cleanup.ts        # Automatic data cleanup
 │
 ├── scripts/
-│   ├── manage-rules.js       # CLI: add/list rules
-│   ├── manage-heuristics.js  # CLI: add/list heuristics
+│   ├── manage-rules.js       # CLI: add/list/delete rules
+│   ├── manage-heuristics.js  # CLI: add/list/delete heuristics
 │   ├── view-learnings.js     # CLI: view learnings
 │   ├── view-metrics.js       # CLI: view metrics
+│   ├── cleanup-expired.js    # CLI: cleanup expired data
 │   ├── seed-rules.js         # Seed default rules
 │   └── seed-heuristics.js    # Seed default heuristics
 │

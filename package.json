@@ -17,6 +17,8 @@
     "heuristics:seed": "node scripts/seed-heuristics.js",
     "learnings:view": "node scripts/view-learnings.js",
     "metrics:view": "node scripts/view-metrics.js",
+    "cleanup:preview": "node scripts/cleanup-expired.js preview",
+    "cleanup:clean": "node scripts/cleanup-expired.js clean",
     "test:simulate": "ts-node tests/simulate.ts",
     "test:hybrid": "ts-node tests/test-hybrid.ts",
     "test:benchmark": "ts-node tests/benchmark.ts"

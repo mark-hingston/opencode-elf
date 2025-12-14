@@ -20,6 +20,13 @@ export const MAX_GOLDEN_RULES = 5;
 export const MAX_RELEVANT_LEARNINGS = 10;
 export const SIMILARITY_THRESHOLD = 0.7; // Minimum cosine similarity for relevance
 
+// Expiration configuration (in days)
+export const RULE_EXPIRATION_DAYS = 90; // Delete unused rules after 90 days
+export const RULE_MIN_HITS_TO_KEEP = 1; // Rules with 0 hits are candidates for deletion
+export const LEARNING_EXPIRATION_DAYS = 60; // Delete learnings after 60 days
+export const HEURISTIC_EXPIRATION_DAYS = 180; // Delete heuristics after 180 days
+export const AUTO_CLEANUP_ENABLED = true; // Enable automatic cleanup on query
+
 /**
  * Find the project root by traversing up from the given directory
  * looking for common project markers (.git, package.json, etc.)

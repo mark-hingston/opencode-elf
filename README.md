@@ -97,29 +97,33 @@ When a tool executes, ELF:
 
 ## Quick Start
 
-### 1. First Time Setup
+### 1. Installation & First Run
 
-After installing the plugin, seed some default data:
+After installing the plugin, restart OpenCode. The plugin will automatically:
+- Initialize the database
+- Load the embedding model (~90MB download on first run)
+- Seed 10 default golden rules
+- Seed 10 default heuristics
 
-```bash
-# Add default golden rules
-npm run rules:seed
-
-# Add default heuristics
-npm run heuristics:seed
+You'll see output like:
+```
+ELF: Initializing plugin...
+ELF: Database initialized
+ELF: Embedding model loaded
+ELF: First run detected - seeding default data...
+ELF: Seeding default golden rules...
+ELF: Added 10 default golden rules
+ELF: Seeding default heuristics...
+ELF: Added 10 default heuristics
+ELF: Default data seeded successfully
+ELF: Plugin ready
 ```
 
-Or add custom rules:
+The plugin is now ready to use! No manual setup required.
 
-```bash
-npm run rules:add "Always validate user inputs before processing"
-npm run rules:add "Use TypeScript strict mode for type safety"
-npm run rules:add "Write tests for critical functionality"
-```
+### 2. Verify Installation (Optional)
 
-### 2. Verify Installation
-
-Run the simulation test to verify everything works:
+If you're developing locally, you can run the simulation test to verify everything works:
 
 ```bash
 npm run test:simulate
@@ -151,6 +155,8 @@ The plugin now works automatically! Golden rules and learnings will be injected 
 
 ## Managing Data
 
+The plugin automatically seeds default data on first run. You can manage this data using the CLI tools below (requires local development setup or plugin directory access).
+
 ### Golden Rules
 
 Golden Rules are constitutional principles that should always guide the AI's behavior.
@@ -162,7 +168,7 @@ npm run rules:add "Always validate inputs before processing"
 # List all rules
 npm run rules:list
 
-# Seed default rules (10 common patterns)
+# Re-seed default rules (if you deleted them)
 npm run rules:seed
 ```
 
@@ -177,7 +183,7 @@ npm run heuristics:add "npm install" "Check package.json exists first"
 # List all heuristics
 npm run heuristics:list
 
-# Seed default heuristics (10 common patterns)
+# Re-seed default heuristics (if you deleted them)
 npm run heuristics:seed
 ```
 

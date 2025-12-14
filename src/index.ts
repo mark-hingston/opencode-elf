@@ -1,4 +1,4 @@
-import { initDatabase } from "./db/client";
+import { initDatabase, isDatabaseEmpty, seedGoldenRules, seedHeuristics } from "./db/client";
 import { embeddingService } from "./services/embeddings";
 import { queryService } from "./services/query";
 import { metricsService } from "./services/metrics";
@@ -19,6 +19,18 @@ async function initialize() {
     // Pre-load embedding model
     await embeddingService.init();
     console.log("ELF: Embedding model loaded");
+    
+    // Check if this is first run (empty database)
+    const isEmpty = await isDatabaseEmpty();
+    if (isEmpty) {
+      console.log("ELF: First run detected - seeding default data...");
+      
+      // Seed default golden rules and heuristics
+      await seedGoldenRules(queryService.addGoldenRule.bind(queryService));
+      await seedHeuristics();
+      
+      console.log("ELF: Default data seeded successfully");
+    }
     
     initialized = true;
     console.log("ELF: Plugin ready");

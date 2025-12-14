@@ -5,10 +5,8 @@
  * Usage: node scripts/manage-rules.js [add|list] [content?]
  */
 
-const { initDatabase, getDbClient } = require("../dist/db/client");
-const { embeddingService } = require("../dist/services/embeddings");
-const { queryService } = require("../dist/services/query");
-const { createHash } = require("node:crypto");
+import { initDatabase, getDbClient } from "../dist/db/client.js";
+import { queryService } from "../dist/services/query.js";
 
 async function main() {
   const [,, command, ...args] = process.argv;
@@ -48,12 +46,13 @@ async function addRule(content) {
   }
   
   console.log("Adding golden rule:", content);
-  await queryService.addGoldenRule(content);
+  // Default to global scope for CLI
+  await queryService.addGoldenRule(content, "global");
   console.log("✓ Golden rule added successfully");
 }
 
 async function listRules() {
-  const db = getDbClient();
+  const db = getDbClient(); // Defaults to global
   const result = await db.execute("SELECT * FROM golden_rules ORDER BY hit_count DESC");
   
   if (result.rows.length === 0) {
@@ -61,7 +60,7 @@ async function listRules() {
     return;
   }
   
-  console.log("\nGolden Rules:");
+  console.log("\nGolden Rules (Global):");
   console.log("─".repeat(80));
   
   for (const row of result.rows) {

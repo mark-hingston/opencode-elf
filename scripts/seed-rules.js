@@ -4,8 +4,8 @@
  * Seed the database with default golden rules
  */
 
-const { initDatabase } = require("../dist/db/client");
-const { queryService } = require("../dist/services/query");
+import { initDatabase } from "../dist/db/client.js";
+import { queryService } from "../dist/services/query.js";
 
 const DEFAULT_RULES = [
   "Always validate user inputs before processing to prevent security vulnerabilities",
@@ -27,7 +27,7 @@ async function main() {
   
   for (const rule of DEFAULT_RULES) {
     console.log(`Adding: ${rule}`);
-    await queryService.addGoldenRule(rule);
+    await queryService.addGoldenRule(rule, "global");
   }
   
   console.log(`\n✓ Successfully added ${DEFAULT_RULES.length} golden rules`);

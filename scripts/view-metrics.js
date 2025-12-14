@@ -5,7 +5,7 @@
  * Usage: node scripts/view-metrics.js
  */
 
-const { initDatabase, getDbClient } = require("../dist/db/client");
+import { initDatabase, getDbClient } from "../dist/db/client.js";
 
 async function main() {
   await initDatabase();
@@ -41,19 +41,6 @@ async function main() {
   console.log(`   Context Injections: ${injections.rows[0].c}`);
   console.log(`   Failures Learned:   ${failures.rows[0].c}`);
 
-  // Context composition (from injection metadata)
-  const injectionMeta = await db.execute(
-    "SELECT meta FROM metrics WHERE type = 'injection' AND meta IS NOT NULL LIMIT 10"
-  );
-  
-  if (injectionMeta.rows.length > 0) {
-    console.log("\n🎯 Context Composition (Last Injection)");
-    const lastMeta = JSON.parse(injectionMeta.rows[0].meta);
-    console.log(`   Golden Rules:   ${lastMeta.rules || 0}`);
-    console.log(`   Learnings:      ${lastMeta.learnings || 0}`);
-    console.log(`   Heuristics:     ${lastMeta.heuristics || 0}`);
-  }
-
   // Recent activity
   console.log("\n🕒 Recent Events (Last 10)");
   const recent = await db.execute(
@@ -69,29 +56,6 @@ async function main() {
       console.log(`   [${time}] ${row.type}: ${value}`);
     }
   }
-
-  // Performance warnings
-  console.log("\n⚠️  Performance Analysis");
-  const avgLatency = lat.rows[0].avg || 0;
-  
-  if (avgLatency === 0) {
-    console.log("   No data to analyze yet");
-  } else if (avgLatency < 200) {
-    console.log("   ✅ Excellent - Latency under 200ms");
-  } else if (avgLatency < 500) {
-    console.log("   ✅ Good - Latency under 500ms");
-  } else if (avgLatency < 1000) {
-    console.log("   ⚠️  Warning - Latency over 500ms");
-    console.log("      Consider optimizing embedding model or caching");
-  } else {
-    console.log("   ❌ Critical - Latency over 1000ms");
-    console.log("      Immediate optimization needed");
-  }
-
-  // Total database size
-  const totalMetrics = await db.execute("SELECT COUNT(*) as c FROM metrics");
-  console.log("\n📦 Database");
-  console.log(`   Total Metrics: ${totalMetrics.rows[0].c}`);
 
   console.log(`\n${"─".repeat(50)}`);
 }

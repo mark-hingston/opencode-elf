@@ -5,8 +5,8 @@
  * Usage: node scripts/manage-heuristics.js [add|list|delete]
  */
 
-const { initDatabase, getDbClient } = require("../dist/db/client");
-const { createHash } = require("node:crypto");
+import { initDatabase, getDbClient } from "../dist/db/client.js";
+import { createHash } from "node:crypto";
 
 async function main() {
   const [,, command, ...args] = process.argv;
@@ -90,7 +90,7 @@ async function listHeuristics() {
     return;
   }
   
-  console.log("\nHeuristics (Regex Patterns):");
+  console.log("\nHeuristics (Global):");
   console.log("─".repeat(80));
   
   for (const row of result.rows) {

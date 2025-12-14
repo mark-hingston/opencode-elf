@@ -5,14 +5,14 @@
  * Usage: node scripts/view-learnings.js [success|failure|all]
  */
 
-const { initDatabase, getDbClient } = require("../dist/db/client");
+import { initDatabase, getDbClient } from "../dist/db/client.js";
 
 async function main() {
   const [,, filter = "all"] = process.argv;
   
   await initDatabase();
   
-  const db = getDbClient();
+  const db = getDbClient(); // Defaults to global
   
   let query = "SELECT * FROM learnings ORDER BY created_at DESC";
   const args = [];
@@ -29,7 +29,7 @@ async function main() {
     return;
   }
   
-  console.log(`\n${filter.toUpperCase()} Learnings:`);
+  console.log(`\n${filter.toUpperCase()} Learnings (Global):`);
   console.log("─".repeat(80));
   
   for (const row of result.rows) {

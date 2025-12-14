@@ -68,7 +68,7 @@ done
 # Check documentation
 echo ""
 echo "6️⃣  Verifying documentation..."
-DOCS=("README.md" "QUICKSTART.md" "TESTING.md" "GIT_SETUP.md" "PROJECT_SUMMARY.md")
+DOCS=("README.md")
 for doc in "${DOCS[@]}"; do
     if [ -f "$doc" ]; then
         echo "   ✅ $doc"
@@ -100,6 +100,16 @@ else
     exit 1
 fi
 
+# Run Hybrid Storage Test
+echo ""
+echo "9️⃣  Running Hybrid Storage Test..."
+if npm run test:hybrid > /dev/null 2>&1; then
+    echo "   ✅ Hybrid storage test passed"
+else
+    echo "   ❌ Hybrid storage test failed"
+    exit 1
+fi
+
 # Summary
 echo ""
 echo "=========================================="
@@ -108,7 +118,7 @@ echo ""
 echo "📋 Next Steps:"
 echo "   1. Run: npm run test:simulate"
 echo "   2. Seed data: npm run rules:seed && npm run heuristics:seed"
-echo "   3. Push to GitHub (see GIT_SETUP.md)"
-echo "   4. Install in OpenCode (see QUICKSTART.md)"
+echo "   3. Push to GitHub"
+echo "   4. Install in OpenCode CLI"
 echo ""
 echo "🚀 Ready for deployment!"

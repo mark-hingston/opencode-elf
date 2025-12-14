@@ -4,8 +4,8 @@
  * Seed the database with default heuristics
  */
 
-const { initDatabase, getDbClient } = require("../dist/db/client");
-const { createHash } = require("node:crypto");
+import { initDatabase, getDbClient } from "../dist/db/client.js";
+import { createHash } from "node:crypto";
 
 const DEFAULT_HEURISTICS = [
   {

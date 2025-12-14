@@ -95,6 +95,20 @@ When a tool executes, ELF:
 2. Records failures automatically
 3. Stores them with embeddings for future retrieval
 
+### Agent Tool (Programmatic Access)
+
+The plugin provides an `elf` tool that agents can invoke to manage memory:
+
+**Available modes:**
+- `list-rules` - List all golden rules
+- `list-heuristics` - List all heuristics
+- `list-learnings` - View recent learnings (optional limit)
+- `add-rule` - Add new golden rule (auto-generates embeddings)
+- `add-heuristic` - Add new heuristic pattern
+- `metrics` - View performance metrics
+
+Agents automatically use this tool when you ask them to manage ELF memory in natural language.
+
 ## Quick Start
 
 ### 1. Installation & First Run
@@ -155,9 +169,77 @@ The plugin now works automatically! Golden rules and learnings will be injected 
 
 ## Managing Data
 
-The plugin automatically seeds default data on first run. You can manage this data using the CLI tools below (requires local development setup or plugin directory access).
+The plugin automatically seeds default data on first run. You can view and manage this data in three ways:
 
-### Golden Rules
+### 1. Natural Conversation (Recommended)
+
+Simply ask OpenCode to manage your ELF memory in natural language:
+
+```
+"Add a golden rule: Always use async/await instead of callbacks"
+"Show me my current golden rules"
+"Add a heuristic for npm errors"
+"What have I learned recently?"
+```
+
+OpenCode will automatically invoke the `elf` tool to:
+- Add new golden rules (with automatic embedding generation)
+- Add new heuristics
+- List rules, heuristics, and learnings
+- View performance metrics
+
+### 2. Optional: Slash Commands
+
+If you prefer slash commands for quick inspection, you can add them to your OpenCode config:
+
+```jsonc
+// opencode.jsonc or ~/.config/opencode/opencode.jsonc
+{
+  "plugin": ["opencode-elf@latest"],
+  "command": {
+    "elf-rules": {
+      "template": "Use the elf tool to list all golden rules",
+      "description": "List all ELF golden rules"
+    },
+    "elf-heuristics": {
+      "template": "Use the elf tool to list all heuristics",
+      "description": "List all ELF heuristics"
+    },
+    "elf-learnings": {
+      "template": "Use the elf tool to list recent learnings. Limit: $ARGUMENTS",
+      "description": "View recent ELF learnings"
+    },
+    "elf-metrics": {
+      "template": "Use the elf tool to show performance metrics",
+      "description": "View ELF performance metrics"
+    }
+  }
+}
+```
+
+Then you can use:
+```
+/elf-rules
+/elf-heuristics
+/elf-learnings 20
+/elf-metrics
+```
+
+### 3. Database Location
+
+All ELF data is stored in: `~/.opencode/elf/memory.db`
+
+You can also query this SQLite database directly:
+
+```bash
+sqlite3 ~/.opencode/elf/memory.db "SELECT * FROM golden_rules"
+```
+
+### 4. Using CLI Tools (Advanced)
+
+For local development or advanced management, use the npm scripts (requires plugin directory access):
+
+#### Golden Rules
 
 Golden Rules are constitutional principles that should always guide the AI's behavior.
 
@@ -172,7 +254,7 @@ npm run rules:list
 npm run rules:seed
 ```
 
-### Heuristics
+#### Heuristics
 
 Heuristics are pattern-based suggestions triggered by regex matching.
 
@@ -187,7 +269,7 @@ npm run heuristics:list
 npm run heuristics:seed
 ```
 
-### Learnings
+#### Learnings
 
 View recorded successes and failures:
 
@@ -218,20 +300,35 @@ This shows:
 
 ## Configuration
 
-Configuration is in `src/config.ts`:
+The plugin can be configured by modifying `src/config.ts` and rebuilding:
 
 ```typescript
-// Storage location
+// Storage location - Currently stores in user's home directory
+// Future versions will support per-project storage
 export const ELF_DIR = join(homedir(), ".opencode", "elf");
+export const DB_PATH = join(ELF_DIR, "memory.db");
 
 // Embedding model
 export const EMBEDDING_MODEL = "Xenova/all-MiniLM-L6-v2";
 
 // Query limits
-export const MAX_GOLDEN_RULES = 5;
-export const MAX_RELEVANT_LEARNINGS = 10;
-export const SIMILARITY_THRESHOLD = 0.7;
+export const MAX_GOLDEN_RULES = 5;             // Max rules to inject per message
+export const MAX_RELEVANT_LEARNINGS = 10;      // Max learnings to inject
+export const SIMILARITY_THRESHOLD = 0.7;       // Min similarity for relevance
 ```
+
+### Database Location
+
+Currently, all ELF memory is stored globally at:
+- **macOS/Linux**: `~/.opencode/elf/memory.db`
+- **Windows**: `C:\Users\<username>\.opencode\elf\memory.db`
+
+This means your ELF learns across ALL your projects. A future version will support:
+- Per-project memory (`.opencode/elf/memory.db`)
+- Hybrid mode (both global and project-specific)
+- Team sharing via git
+
+To customize the database location, edit `ELF_DIR` in `src/config.ts` and rebuild the plugin.
 
 ## Database Schema
 

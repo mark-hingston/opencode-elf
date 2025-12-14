@@ -1,5 +1,5 @@
 import { pipeline, type FeatureExtractionPipeline } from "@xenova/transformers";
-import { EMBEDDING_MODEL } from "../config";
+import { EMBEDDING_MODEL } from "../config.js";
 
 class EmbeddingService {
   private static instance: EmbeddingService;

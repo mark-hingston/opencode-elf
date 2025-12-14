@@ -1,7 +1,8 @@
 {
   "name": "opencode-elf",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Emergent Learning Framework (ELF) plugin for OpenCode - Learn from past successes and failures",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
@@ -37,6 +38,7 @@
     "@xenova/transformers": "^2.17.2"
   },
   "devDependencies": {
+    "@opencode-ai/plugin": "^1.0.147",
     "@types/node": "^20.11.5",
     "ts-node": "^10.9.2",
     "typescript": "^5.3.3"
@@ -47,5 +49,8 @@
       "chat.params",
       "event"
     ]
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }

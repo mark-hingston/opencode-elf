@@ -1,4 +1,4 @@
-import { getDbClient } from "../db/client";
+import { getDbClient } from "../db/client.js";
 import { createHash } from "node:crypto";
 
 export class MetricsService {

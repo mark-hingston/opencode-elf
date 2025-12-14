@@ -2,7 +2,7 @@ import { createClient, type Client } from "@libsql/client";
 import { mkdirSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { createHash } from "node:crypto";
-import { DB_PATH } from "../config";
+import { DB_PATH } from "../config.js";
 
 let dbClient: Client | null = null;
 

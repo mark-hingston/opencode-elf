@@ -1,7 +1,7 @@
-import { getDbClient } from "../db/client";
-import { embeddingService } from "./embeddings";
-import type { GoldenRule, Learning, Heuristic, SearchResult, ELFContext } from "../types/elf";
-import { MAX_GOLDEN_RULES, MAX_RELEVANT_LEARNINGS, SIMILARITY_THRESHOLD } from "../config";
+import { getDbClient } from "../db/client.js";
+import { embeddingService } from "./embeddings.js";
+import type { GoldenRule, Learning, Heuristic, SearchResult, ELFContext } from "../types/elf.js";
+import { MAX_GOLDEN_RULES, MAX_RELEVANT_LEARNINGS, SIMILARITY_THRESHOLD } from "../config.js";
 import { createHash } from "node:crypto";
 
 export class QueryService {

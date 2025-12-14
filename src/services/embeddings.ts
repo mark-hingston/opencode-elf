@@ -1,0 +1,58 @@
+import { pipeline, type FeatureExtractionPipeline } from "@xenova/transformers";
+import { EMBEDDING_MODEL } from "../config";
+
+class EmbeddingService {
+  private static instance: EmbeddingService;
+  private pipe: FeatureExtractionPipeline | null = null;
+
+  private constructor() {}
+
+  public static getInstance(): EmbeddingService {
+    if (!EmbeddingService.instance) {
+      EmbeddingService.instance = new EmbeddingService();
+    }
+    return EmbeddingService.instance;
+  }
+
+  /**
+   * Initialize the pipeline. 
+   * Call this when the plugin loads to warm up the model.
+   */
+  public async init(): Promise<void> {
+    if (!this.pipe) {
+      console.log("ELF: Loading embedding model...");
+      this.pipe = await pipeline("feature-extraction", EMBEDDING_MODEL) as FeatureExtractionPipeline;
+      console.log("ELF: Model loaded.");
+    }
+  }
+
+  public async generate(text: string): Promise<number[]> {
+    if (!this.pipe) await this.init();
+    if (!this.pipe) throw new Error("Failed to initialize embedding pipeline");
+    
+    // Generate embedding
+    const output = await this.pipe(text, { pooling: "mean", normalize: true });
+    
+    // Convert Tensor to standard array
+    return Array.from(output.data);
+  }
+
+  /**
+   * Calculate Cosine Similarity between two vectors
+   */
+  public cosineSimilarity(a: number[], b: number[]): number {
+    let dotProduct = 0;
+    let normA = 0;
+    let normB = 0;
+    
+    for (let i = 0; i < a.length; i++) {
+      dotProduct += a[i] * b[i];
+      normA += a[i] * a[i];
+      normB += b[i] * b[i];
+    }
+    
+    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+  }
+}
+
+export const embeddingService = EmbeddingService.getInstance();

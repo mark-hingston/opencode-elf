@@ -426,4 +426,5 @@ export const ELFPlugin: Plugin = async ({ directory }: PluginInput) => {
   };
 };
 
-export default ELFPlugin;
+// NOTE: Do NOT export as default - OpenCode's plugin loader calls ALL exports
+// as functions, which would cause double initialization.

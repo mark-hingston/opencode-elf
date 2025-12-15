@@ -289,21 +289,9 @@ If you prefer slash commands for quick inspection, you can add them to your Open
 {
   "plugin": ["opencode-elf@latest"],
   "command": {
-    "elf-rules": {
-      "template": "Use the elf tool to list all golden rules",
-      "description": "List all ELF golden rules"
-    },
-    "elf-heuristics": {
-      "template": "Use the elf tool to list all heuristics",
-      "description": "List all ELF heuristics"
-    },
-    "elf-learnings": {
-      "template": "Use the elf tool to list recent learnings. Limit: $ARGUMENTS",
-      "description": "View recent ELF learnings"
-    },
-    "elf-metrics": {
-      "template": "Use the elf tool to show performance metrics",
-      "description": "View ELF performance metrics"
+    "elf": {
+      "template": "Use the elf tool. Arguments: $ARGUMENTS",
+      "description": "ELF memory system. Commands: rules list, heuristics list, learnings list, search, metrics, rules add, heuristics add"
     }
   }
 }
@@ -311,10 +299,10 @@ If you prefer slash commands for quick inspection, you can add them to your Open
 
 Then you can use:
 ```
-/elf-rules
-/elf-heuristics
-/elf-learnings 20
-/elf-metrics
+/elf
+/elf rules list
+/elf search "error code 503"
+/elf metrics
 ```
 
 ### 3. Using CLI Tools (Advanced)

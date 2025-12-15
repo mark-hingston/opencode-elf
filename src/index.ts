@@ -139,28 +139,65 @@ export const ELFPlugin: Plugin = async ({ directory }: PluginInput) => {
       // @ts-ignore
       if (event.type !== "tool.execute.after") return;
       
-      const toolName = (event as unknown as { tool: string }).tool;
-      const result = (event as unknown as { result: Record<string, unknown> }).result;
+      // Extract tool name, result, AND arguments
+      const payload = event as unknown as { 
+        tool: string; 
+        result: Record<string, unknown>;
+        args: Record<string, unknown>;
+      };
+      
+      const toolName = payload.tool;
+      const result = payload.result;
+      const args = payload.args;
       
       if (!result || !toolName) return;
       
+      // Detect failures (stderr, error codes, exceptions)
       const stderr = result.stderr as string | undefined;
       const error = result.error as string | undefined;
       const exitCode = result.exitCode as number | undefined;
       const hasError = stderr || error || (exitCode !== undefined && exitCode !== 0);
       
       if (hasError) {
-        const errorContent = stderr || error || "Command failed";
-        const learningContent = `Tool '${toolName}' failed: ${errorContent}`;
+        // Ignore user interruptions (SIGINT/130)
+        if (exitCode === 130) return;
         
+        // Ignore empty errors if there is no stderr
+        if (!stderr && !error && exitCode === 0) return;
+        
+        // Get the command context
+        // For bash/cmd tools, the command is usually in args.command or args.cmd
+        // For other tools, we just stringify the args
+        let commandContext = "";
+        if (args) {
+          if (typeof args.command === 'string') commandContext = args.command;
+          else if (typeof args.cmd === 'string') commandContext = args.cmd;
+          else commandContext = JSON.stringify(args);
+        }
+        
+        // Truncate command if it's too long (to keep embeddings focused)
+        if (commandContext.length > 100) {
+          commandContext = `${commandContext.substring(0, 97)}...`;
+        }
+
+        // Construct a richer learning content
+        const errorDetail = stderr || error || `Exit Code ${exitCode}`;
+        
+        // Format: "Tool 'bash' failed running 'npm install': stderr output..."
+        const learningContent = `Tool '${toolName}' failed${commandContext ? ` running '${commandContext}'` : ''}: ${errorDetail}`;
+        
+        // Store full context for deduplication
+        // We combine args + result so we distinguish between failing "npm install" vs "git status"
+        const fullContext = JSON.stringify({ args, result });
+
         await queryService.recordLearning(
           learningContent,
           'failure',
-          JSON.stringify(result)
+          fullContext
         );
         
         metricsService.record('learning_failure', 1, { tool: toolName });
-        console.log("ELF: Recorded failure learning");
+        console.log(`ELF: Recorded failure - ${learningContent.slice(0, 50)}...`);
       }
     } catch (error) {
       console.error("ELF: Error in event hook", error);

@@ -65,15 +65,17 @@ async function runSimulation() {
     }
 
     // 3. Simulate a Tool Failure (Learning Loop)
+    // Note: The event hook now captures command context for richer learnings
+    // Format: "Tool 'bash' failed running 'npm install': error message"
     console.log("\n3️⃣  Simulating Tool Failure...");
     
     await queryService.recordLearning(
-      "Tool 'npm' failed: npm ERR! code ENOENT\nnpm ERR! syscall open\nnpm ERR! path package.json",
+      "Tool 'bash' failed running 'npm install': npm ERR! code ENOENT\nnpm ERR! syscall open\nnpm ERR! path package.json",
       "failure",
-      JSON.stringify({ stderr: "npm ERR! code ENOENT", exitCode: 1 })
+      JSON.stringify({ args: { command: "npm install" }, result: { stderr: "npm ERR! code ENOENT", exitCode: 1 } })
     );
     
-    console.log("✅ Tool failure recorded as learning.");
+    console.log("✅ Tool failure recorded as learning (with command context).");
 
     // 4. Verify Learning was Recorded
     console.log("\n4️⃣  Verifying Learning Retrieval...");
@@ -158,7 +160,7 @@ async function runSimulation() {
         "SELECT content FROM learnings ORDER BY created_at DESC LIMIT 1"
       );
       const content = lastLearning.rows[0]?.content as string;
-      if (content && content.includes("[REDACTED]")) {
+      if (content?.includes("[REDACTED]")) {
         console.log("✅ SUCCESS: Private content was redacted before storage");
       } else if (content && !content.includes("sk-secret-key")) {
         console.log("✅ SUCCESS: Private content was stripped");

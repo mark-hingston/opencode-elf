@@ -9,6 +9,8 @@
 - **Learnings**: Automatic recording of tool execution failures and successes  
 - **Context Injection**: Relevant past experiences are injected into each conversation  
 - **Hybrid Storage**: Support for both global and project-scoped memories  
+- **Hybrid Search**: Combined vector (semantic) + FTS5 (keyword) search for best results
+- **Privacy Controls**: Use `<private>` tags to exclude sensitive data from storage
 - **Automatic Cleanup**: Configurable expiration for unused rules and old learnings
 - **Local-First**: Uses local SQLite storage and local embeddings (no API calls)
 
@@ -51,6 +53,39 @@ Golden Rules:
 - All data stays on your machine
 - Works offline after initial model download (~90MB)
 - Automatic cleanup prevents database from growing indefinitely
+
+### Hybrid Search (Vector + FTS)
+
+ELF now supports **hybrid search** combining semantic vector search with SQLite FTS5 full-text search:
+
+- **Vector Search**: Great for *concepts* ("how do I fix a database lock?")
+- **FTS Search**: Superior for *specifics* ("error code 503", "function processData")
+- **Hybrid**: Combines both approaches for best results
+
+Results include a `matchType` indicator:
+- `semantic` - Found via vector similarity
+- `keyword` - Found via FTS keyword match
+- `hybrid` - Found by both (boosted score)
+
+**Example usage via the elf tool:**
+```
+"Search my learnings for error code ENOENT"
+"Find learnings about authentication failures"
+```
+
+### Privacy Controls
+
+Protect sensitive data using `<private>` tags:
+
+```
+The API key is <private>sk-abc123xyz</private>
+```
+
+**How it works:**
+- Content wrapped in `<private>...</private>` tags is never stored
+- If the entire content contains privacy tags, the learning is skipped
+- Partial private content is replaced with `[REDACTED]`
+- Works for both `content` and `context` in learnings
 
 ## Installation
 
@@ -154,6 +189,7 @@ The plugin provides an `elf` tool that agents can invoke to manage memory:
 - `add-rule` - Add new golden rule (auto-generates embeddings, optional `scope`)
 - `add-heuristic` - Add new heuristic pattern (optional `scope`)
 - `metrics` - View performance metrics
+- `search` - Hybrid search across all learnings (requires `query`, optional `limit`)
 
 **Examples:**
 ```
@@ -161,6 +197,7 @@ The plugin provides an `elf` tool that agents can invoke to manage memory:
 "Add a project rule: This API requires authentication tokens"
 "Show me project-specific golden rules"
 "List all learnings from this project"
+"Search learnings for error code ENOENT"
 ```
 
 ## Quick Start
@@ -442,6 +479,11 @@ The plugin uses SQLite with the following tables:
 - `created_at` (INTEGER)
 - `context_hash` (TEXT - for deduplication)
 
+### learnings_fts (FTS5 Virtual Table)
+- Full-text search index on learnings
+- Synced automatically via triggers
+- Enables fast keyword-based search
+
 ### heuristics
 - `id` (TEXT PK)
 - `pattern` (TEXT - regex)
@@ -584,6 +626,8 @@ npm run test:benchmark
 - [x] Simulation testing
 - [x] **Hybrid storage (global + project-scoped memories)**
 - [x] **Performance optimizations (parallel queries + embedding cache)**
+- [x] **Hybrid search (vector + FTS5 full-text search)**
+- [x] **Privacy controls (`<private>` tag filtering)**
 - [ ] Success detection (currently only failures are auto-recorded)
 - [ ] Experiment tracking (hypothesis testing)
 - [ ] Decision records (ADRs)

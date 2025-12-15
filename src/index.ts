@@ -1,4 +1,4 @@
-import { initDatabase, isDatabaseEmpty, seedGoldenRules, seedHeuristics, getDbClient } from "./db/client.js";
+import { initDatabase, isDatabaseEmpty, seedGoldenRules, seedHeuristics, getDbClient, backfillFTS } from "./db/client.js";
 import { embeddingService } from "./services/embeddings.js";
 import { QueryService } from "./services/query.js";
 import { metricsService } from "./services/metrics.js";
@@ -47,6 +47,12 @@ export const ELFPlugin: Plugin = async ({ directory }: PluginInput) => {
         console.log("ELF: First run detected - seeding default data...");
         await seedGoldenRules(queryService.addGoldenRule.bind(queryService));
         await seedHeuristics(GLOBAL_DB_PATH);
+      }
+
+      // Backfill FTS table for existing learnings (runs once after FTS is added)
+      await backfillFTS(GLOBAL_DB_PATH);
+      if (paths.project) {
+        await backfillFTS(paths.project);
       }
       
       console.log(`ELF: Ready (took ${Date.now() - start}ms)`);
@@ -166,7 +172,7 @@ export const ELFPlugin: Plugin = async ({ directory }: PluginInput) => {
    */
   tool: {
     elf: tool({
-      description: "Manage and query the ELF (Emergent Learning Framework) memory system.",
+      description: "Manage and query the ELF (Emergent Learning Framework) memory system. Use 'search' mode for hybrid semantic+keyword search across all learnings.",
         args: {
           mode: tool.schema.enum([
             "list-rules",
@@ -174,11 +180,13 @@ export const ELFPlugin: Plugin = async ({ directory }: PluginInput) => {
             "list-learnings",
             "add-rule",
             "add-heuristic",
-            "metrics"
+            "metrics",
+            "search"
           ]),
           content: tool.schema.string().optional(),
           pattern: tool.schema.string().optional(),
           suggestion: tool.schema.string().optional(),
+          query: tool.schema.string().optional(), // For search mode
           limit: tool.schema.number().optional(),
           scope: tool.schema.enum(["global", "project"]).optional(),
         },
@@ -187,6 +195,7 @@ export const ELFPlugin: Plugin = async ({ directory }: PluginInput) => {
         content?: string;
         pattern?: string;
         suggestion?: string;
+        query?: string;
         limit?: number;
         scope?: "global" | "project";
       }) {
@@ -372,6 +381,33 @@ export const ELFPlugin: Plugin = async ({ directory }: PluginInput) => {
                 });
               }
 
+              case "search": {
+                if (!args.query) {
+                  return JSON.stringify({
+                    success: false,
+                    error: "query parameter is required for search mode",
+                  });
+                }
+
+                const results = await queryService.searchHybrid(args.query);
+                const limit = args.limit || 10;
+
+                return JSON.stringify({
+                  success: true,
+                  query: args.query,
+                  count: results.length,
+                  results: results.slice(0, limit).map(r => ({
+                    id: r.item.id,
+                    content: r.item.content,
+                    category: r.item.category,
+                    score: Number.parseFloat(r.score.toFixed(3)),
+                    matchType: r.item.matchType || 'semantic',
+                    scope: r.item.scope || 'global',
+                    created: new Date(r.item.created_at).toISOString(),
+                  })),
+                });
+              }
+
               default:
                 return JSON.stringify({
                   success: false,
@@ -389,3 +425,5 @@ export const ELFPlugin: Plugin = async ({ directory }: PluginInput) => {
     },
   };
 };
+
+export default ELFPlugin;

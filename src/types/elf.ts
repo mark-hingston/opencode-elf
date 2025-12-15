@@ -18,6 +18,7 @@ export interface Learning {
   created_at: number;
   context_hash: string; // Hash of the tool output/error for deduplication
   scope?: MemoryScope; // Added for tracking where the learning came from
+  matchType?: 'semantic' | 'keyword' | 'hybrid'; // How this learning was found in search
 }
 
 export interface Heuristic {

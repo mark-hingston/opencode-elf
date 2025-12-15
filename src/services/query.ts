@@ -6,6 +6,23 @@ import { createHash } from "node:crypto";
 import type { Client } from "@libsql/client";
 import { cleanupExpiredData } from "./cleanup.js";
 
+// Privacy tag regex pattern
+const PRIVATE_TAG_PATTERN = /<private>[\s\S]*?<\/private>/gi;
+
+/**
+ * Check if content contains privacy tags
+ */
+function containsPrivateTag(content: string): boolean {
+  return content.includes("<private>") || PRIVATE_TAG_PATTERN.test(content);
+}
+
+/**
+ * Strip privacy-tagged content from a string
+ */
+function stripPrivateContent(content: string): string {
+  return content.replace(PRIVATE_TAG_PATTERN, "[REDACTED]");
+}
+
 export class QueryService {
   private workingDirectory: string;
   private lastCleanupTime = 0;
@@ -168,6 +185,121 @@ export class QueryService {
   }
 
   /**
+   * Search for learnings using Full Text Search (FTS5)
+   * Better for exact keywords, error codes, function names
+   */
+  async searchFTS(query: string): Promise<SearchResult<Learning>[]> {
+    const { clients, scopes } = this.getClients();
+    const ftsResults: SearchResult<Learning>[] = [];
+
+    // Escape FTS5 special characters to prevent syntax errors
+    const escapedQuery = query
+      .replace(/"/g, '""')  // Escape double quotes
+      .replace(/[*():^]/g, ' ')  // Remove special FTS operators
+      .trim();
+
+    if (!escapedQuery) {
+      return [];
+    }
+
+    for (let i = 0; i < clients.length; i++) {
+      const db = clients[i];
+      const scope = scopes[i];
+
+      try {
+        // FTS5 query with ranking
+        const result = await db.execute({
+          sql: `SELECT fts.id, fts.content, fts.category, rank
+                FROM learnings_fts fts
+                WHERE learnings_fts MATCH ?
+                ORDER BY rank
+                LIMIT 10`,
+          args: [escapedQuery]
+        });
+
+        for (const row of result.rows) {
+          // Get the full learning record to retrieve metadata
+          const learningResult = await db.execute({
+            sql: "SELECT * FROM learnings WHERE id = ?",
+            args: [row.id as string]
+          });
+
+          if (learningResult.rows.length > 0) {
+            const learningRow = learningResult.rows[0];
+            ftsResults.push({
+              item: {
+                id: learningRow.id as string,
+                content: learningRow.content as string,
+                category: learningRow.category as 'success' | 'failure',
+                embedding: JSON.parse(learningRow.embedding as string),
+                created_at: learningRow.created_at as number,
+                context_hash: learningRow.context_hash as string,
+                scope,
+              },
+              score: 1.0 // FTS matches are considered high confidence for exact matches
+            });
+          }
+        }
+      } catch (e) {
+        // FTS might fail on syntax errors or if table doesn't exist yet
+        console.error("ELF: FTS search error", e);
+      }
+    }
+
+    return ftsResults;
+  }
+
+  /**
+   * Hybrid search combining Vector (semantic) and FTS (keyword) search
+   * Best of both worlds: concepts + specifics
+   */
+  async searchHybrid(query: string): Promise<SearchResult<Learning>[]> {
+    // Run both searches in parallel
+    const [vectorResults, ftsResults] = await Promise.all([
+      this.searchLearnings(query),
+      this.searchFTS(query)
+    ]);
+
+    // Merge and deduplicate results
+    const seenIds = new Set<string>();
+    const merged: SearchResult<Learning>[] = [];
+
+    // Add vector results first (with original semantic scores)
+    for (const result of vectorResults) {
+      if (!seenIds.has(result.item.id)) {
+        merged.push({
+          ...result,
+          item: { ...result.item, matchType: 'semantic' as const }
+        });
+        seenIds.add(result.item.id);
+      }
+    }
+
+    // Add FTS results (mark them as keyword matches)
+    for (const result of ftsResults) {
+      if (!seenIds.has(result.item.id)) {
+        merged.push({
+          ...result,
+          item: { ...result.item, matchType: 'keyword' as const }
+        });
+        seenIds.add(result.item.id);
+      } else {
+        // If found in both, boost the score
+        const existing = merged.find(r => r.item.id === result.item.id);
+        if (existing) {
+          existing.score = Math.min(1.0, existing.score + 0.1); // Boost for appearing in both
+          (existing.item as Learning & { matchType: string }).matchType = 'hybrid';
+        }
+      }
+    }
+
+    // Sort by score descending
+    merged.sort((a, b) => b.score - a.score);
+
+    return merged.slice(0, MAX_RELEVANT_LEARNINGS);
+  }
+
+  /**
    * Get heuristics that match keywords in the prompt from all databases
    */
   private async getMatchingHeuristics(prompt: string): Promise<Heuristic[]> {
@@ -225,12 +357,22 @@ export class QueryService {
     context: string,
     scope: MemoryScope = "project"
   ): Promise<void> {
+    // Privacy check - skip recording if content or context contains <private> tags
+    if (containsPrivateTag(content) || containsPrivateTag(context)) {
+      console.log("ELF: Skipping recording due to <private> tag in content");
+      return;
+    }
+
+    // Strip any private content from the learning (in case of partial tagging)
+    const sanitizedContent = stripPrivateContent(content);
+    const sanitizedContext = stripPrivateContent(context);
+
     const paths = getDbPaths(this.workingDirectory);
     const dbPath = scope === "project" && paths.project ? paths.project : paths.global;
     const db = getDbClient(dbPath);
     
     // Generate hash to avoid duplicates
-    const contextHash = createHash('sha256').update(context).digest('hex').slice(0, 16);
+    const contextHash = createHash('sha256').update(sanitizedContext).digest('hex').slice(0, 16);
     
     // Check if we already have this learning
     const existing = await db.execute({
@@ -243,11 +385,11 @@ export class QueryService {
     }
     
     // Generate embedding
-    const embedding = await embeddingService.generate(content);
+    const embedding = await embeddingService.generate(sanitizedContent);
     
     // Store learning
     const id = createHash('sha256')
-      .update(content + Date.now().toString())
+      .update(sanitizedContent + Date.now().toString())
       .digest('hex')
       .slice(0, 16);
     
@@ -256,7 +398,7 @@ export class QueryService {
             VALUES (?, ?, ?, ?, ?, ?)`,
       args: [
         id,
-        content,
+        sanitizedContent,
         category,
         JSON.stringify(embedding),
         Date.now(),

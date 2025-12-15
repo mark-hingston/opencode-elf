@@ -88,7 +88,33 @@ export async function initDatabase(dbPath?: string): Promise<void> {
     );`,
     
     "CREATE INDEX IF NOT EXISTS idx_metrics_type ON metrics(type);",
-    "CREATE INDEX IF NOT EXISTS idx_metrics_created_at ON metrics(created_at);"
+    "CREATE INDEX IF NOT EXISTS idx_metrics_created_at ON metrics(created_at);",
+
+    // FTS5 Virtual Table for full-text search on learnings
+    `CREATE VIRTUAL TABLE IF NOT EXISTS learnings_fts USING fts5(
+      id UNINDEXED,
+      content,
+      category UNINDEXED,
+      tokenize = 'porter unicode61'
+    );`,
+
+    // Trigger to sync FTS table on INSERT
+    `CREATE TRIGGER IF NOT EXISTS learnings_fts_ai AFTER INSERT ON learnings BEGIN
+      INSERT INTO learnings_fts(id, content, category)
+      VALUES (new.id, new.content, new.category);
+    END;`,
+
+    // Trigger to sync FTS table on DELETE
+    `CREATE TRIGGER IF NOT EXISTS learnings_fts_ad AFTER DELETE ON learnings BEGIN
+      DELETE FROM learnings_fts WHERE id = old.id;
+    END;`,
+
+    // Trigger to sync FTS table on UPDATE
+    `CREATE TRIGGER IF NOT EXISTS learnings_fts_au AFTER UPDATE ON learnings BEGIN
+      DELETE FROM learnings_fts WHERE id = old.id;
+      INSERT INTO learnings_fts(id, content, category)
+      VALUES (new.id, new.content, new.category);
+    END;`
   ];
 
   for (const query of queries) {
@@ -210,4 +236,40 @@ export async function seedHeuristics(dbPath?: string): Promise<void> {
   }
   
   console.log(`ELF: Added ${DEFAULT_HEURISTICS.length} default heuristics`);
+}
+
+/**
+ * Backfill FTS table with existing learnings
+ * This is needed for databases created before FTS support was added
+ */
+export async function backfillFTS(dbPath?: string): Promise<void> {
+  const db = getDbClient(dbPath);
+  
+  try {
+    // Check if there are learnings not in FTS
+    const result = await db.execute(`
+      SELECT l.id, l.content, l.category 
+      FROM learnings l
+      LEFT JOIN learnings_fts fts ON l.id = fts.id
+      WHERE fts.id IS NULL
+    `);
+    
+    if (result.rows.length === 0) {
+      return; // Nothing to backfill
+    }
+    
+    console.log(`ELF: Backfilling ${result.rows.length} learnings to FTS index...`);
+    
+    for (const row of result.rows) {
+      await db.execute({
+        sql: "INSERT INTO learnings_fts(id, content, category) VALUES (?, ?, ?)",
+        args: [row.id as string, row.content as string, row.category as string]
+      });
+    }
+    
+    console.log("ELF: FTS backfill complete");
+  } catch (error) {
+    // FTS table might not exist yet in very old databases, ignore
+    console.error("ELF: FTS backfill skipped (may not be initialized yet)");
+  }
 }

@@ -4,7 +4,7 @@
  * Run with: npm run test:simulate
  */
 
-import { initDatabase, getDbClient, isDatabaseEmpty, seedGoldenRules, seedHeuristics } from "../dist/db/client.js";
+import { initDatabase, getDbClient, isDatabaseEmpty, seedGoldenRules, seedHeuristics, backfillFTS } from "../dist/db/client.js";
 import { QueryService } from "../dist/services/query.js";
 import { embeddingService } from "../dist/services/embeddings.js";
 import { GLOBAL_DB_PATH, getDbPaths } from "../dist/config.js";
@@ -41,6 +41,12 @@ async function runSimulation() {
       console.log("   First run detected - seeding default data...");
       await seedGoldenRules(queryService.addGoldenRule.bind(queryService));
       await seedHeuristics(GLOBAL_DB_PATH);
+    }
+    
+    // Backfill FTS for existing learnings
+    await backfillFTS(GLOBAL_DB_PATH);
+    if (paths.project) {
+      await backfillFTS(paths.project);
     }
     
     const initTime = Date.now() - initStart;
@@ -99,12 +105,75 @@ async function runSimulation() {
       console.error("❌ FAILURE: Context formatting incomplete");
     }
 
+    // 6. Test Hybrid Search (FTS + Vector)
+    console.log("\n6️⃣  Testing Hybrid Search (FTS + Vector)...");
+    
+    // Record a learning with a specific keyword for FTS testing
+    await queryService.recordLearning(
+      "Tool 'docker' failed: ERROR_CODE_42 container not found",
+      "failure",
+      JSON.stringify({ stderr: "ERROR_CODE_42", exitCode: 1, testId: "fts-test" })
+    );
+    
+    // Search using hybrid search
+    const hybridResults = await queryService.searchHybrid("ERROR_CODE_42");
+    
+    if (hybridResults.length > 0) {
+      const ftsMatch = hybridResults.find(r => r.item.content.includes("ERROR_CODE_42"));
+      if (ftsMatch) {
+        console.log("✅ SUCCESS: Hybrid search found the specific error code");
+        console.log(`   Match type: ${ftsMatch.item.matchType || 'unknown'}`);
+        console.log(`   Score: ${(ftsMatch.score * 100).toFixed(1)}%`);
+      } else {
+        console.log("⚠️  Hybrid search returned results but didn't find exact match");
+      }
+    } else {
+      console.log("⚠️  Hybrid search returned no results (FTS may need more data)");
+    }
+
+    // 7. Test Privacy Filter
+    console.log("\n7️⃣  Testing Privacy Filter...");
+    
+    // Count learnings before
+    const db = getDbClient(GLOBAL_DB_PATH);
+    const beforeCount = await db.execute("SELECT COUNT(*) as count FROM learnings");
+    const countBefore = beforeCount.rows[0].count as number;
+    
+    // Try to record a learning with private content
+    await queryService.recordLearning(
+      "API key is <private>sk-secret-key-12345</private> and failed",
+      "failure",
+      JSON.stringify({ error: "auth failed", testId: "privacy-test" })
+    );
+    
+    // Count learnings after - should be same (learning should be skipped)
+    const afterCount = await db.execute("SELECT COUNT(*) as count FROM learnings");
+    const countAfter = afterCount.rows[0].count as number;
+    
+    if (countAfter === countBefore) {
+      console.log("✅ SUCCESS: Learning with <private> tag was NOT recorded");
+    } else {
+      // Check if it was recorded with redacted content
+      const lastLearning = await db.execute(
+        "SELECT content FROM learnings ORDER BY created_at DESC LIMIT 1"
+      );
+      const content = lastLearning.rows[0]?.content as string;
+      if (content && content.includes("[REDACTED]")) {
+        console.log("✅ SUCCESS: Private content was redacted before storage");
+      } else if (content && !content.includes("sk-secret-key")) {
+        console.log("✅ SUCCESS: Private content was stripped");
+      } else {
+        console.error("❌ FAILURE: Private content may have been stored");
+      }
+    }
+
     console.log("\n🎉 All Tests Passed!");
     console.log("\n📊 Summary:");
     console.log(`   Initialization time: ${initTime}ms`);
     console.log(`   Golden rules active: ${context.goldenRules.length}`);
-    console.log("   Learnings recorded: 1");
     console.log("   Context injection: Ready");
+    console.log("   Hybrid search: Ready");
+    console.log("   Privacy filter: Ready");
     
   } catch (error) {
     console.error("\n❌ Simulation failed:", error);

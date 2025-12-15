@@ -16,13 +16,26 @@
 
 ### Hybrid Storage
 
-ELF now supports both **global** and **project-scoped** memories:
+ELF supports both **global** and **project-scoped** memories:
 
-- **Global memories** (`~/.opencode/elf/memory.db`): Shared across all projects
-- **Project memories** (`<project>/.opencode/elf/memory.db`): Specific to each project
+- **Global memories**: Shared across all projects (stored in `~/.opencode/elf/memory.db`)
+- **Project memories**: Specific to each project (stored in `<project>/.opencode/elf/memory.db`)
 - Project detection via `.git` or `.opencode` directories
 - Project memories are prioritized in context injection
 - Add project memories to `.gitignore` for privacy, or commit for team sharing
+
+**Example usage:**
+```
+"Add a global rule: Always validate user inputs"
+"Add a project rule: This API requires JWT authentication"
+```
+
+**Context injection shows both, with project memories tagged:**
+```
+Golden Rules:
+- Always validate user inputs
+- This API requires JWT authentication [project]
+```
 
 ### Performance Optimizations
 
@@ -38,19 +51,6 @@ ELF now supports both **global** and **project-scoped** memories:
 - All data stays on your machine
 - Works offline after initial model download (~90MB)
 - Automatic cleanup prevents database from growing indefinitely
-
-Example:
-```
-"Add a global rule: Always validate user inputs"
-"Add a project rule: This API requires JWT authentication"
-```
-
-Context will show both, with project memories tagged:
-```
-Golden Rules:
-- Always validate user inputs
-- This API requires JWT authentication [project]
-```
 
 ## Installation
 
@@ -280,17 +280,7 @@ Then you can use:
 /elf-metrics
 ```
 
-### 3. Database Location
-
-All ELF data is stored in: `~/.opencode/elf/memory.db`
-
-You can also query this SQLite database directly:
-
-```bash
-sqlite3 ~/.opencode/elf/memory.db "SELECT * FROM golden_rules"
-```
-
-### 4. Using CLI Tools (Advanced)
+### 3. Using CLI Tools (Advanced)
 
 For local development or advanced management, use the npm scripts (requires plugin directory access):
 
@@ -386,23 +376,26 @@ After editing config, rebuild with `npm run build`.
 
 ## Configuration
 
-The plugin can be configured by modifying `src/config.ts` and rebuilding:
+The plugin can be configured by modifying `src/config.ts` and rebuilding with `npm run build`.
+
+### Query & Performance Settings
 
 ```typescript
-// Storage location - Currently stores in user's home directory
-// Future versions will support per-project storage
-export const ELF_DIR = join(homedir(), ".opencode", "elf");
-export const DB_PATH = join(ELF_DIR, "memory.db");
-
-// Embedding model
-export const EMBEDDING_MODEL = "Xenova/all-MiniLM-L6-v2";
-
 // Query limits
 export const MAX_GOLDEN_RULES = 5;             // Max rules to inject per message
 export const MAX_RELEVANT_LEARNINGS = 10;      // Max learnings to inject
 export const SIMILARITY_THRESHOLD = 0.7;       // Min similarity for relevance
 
-// Expiration configuration (in days)
+// Embedding model
+export const EMBEDDING_MODEL = "Xenova/all-MiniLM-L6-v2";
+
+// Hybrid storage
+export const ENABLE_HYBRID_STORAGE = true;     // Enable project-scoped memories
+```
+
+### Expiration Settings
+
+```typescript
 export const RULE_EXPIRATION_DAYS = 90;        // Delete unused rules after 90 days
 export const RULE_MIN_HITS_TO_KEEP = 1;        // Rules with 0 hits are candidates
 export const LEARNING_EXPIRATION_DAYS = 60;    // Delete learnings after 60 days
@@ -410,38 +403,25 @@ export const HEURISTIC_EXPIRATION_DAYS = 180;  // Delete heuristics after 180 da
 export const AUTO_CLEANUP_ENABLED = true;      // Enable automatic cleanup
 ```
 
-### Database Location
+### Database Locations
 
-ELF now supports **hybrid storage** with both global and project-scoped memories:
-
-**Global Storage (cross-project):**
+**Global Storage** (cross-project):
 - **macOS/Linux**: `~/.opencode/elf/memory.db`
 - **Windows**: `C:\Users\<username>\.opencode\elf\memory.db`
-- Contains memories that apply across all your projects
-- Default seeded golden rules and heuristics are stored here
 
-**Project Storage (project-specific):**
-- **Location**: `<project-root>/.opencode/elf/memory.db`
+**Project Storage** (project-specific):
+- `<project-root>/.opencode/elf/memory.db`
 - Automatically detected by finding `.git` or `.opencode` directories
-- Contains memories specific to the current project
-- Project memories are prioritized over global ones in context injection
-- Add to `.gitignore` for private memories, or commit for team sharing
 
-**How Hybrid Storage Works:**
-- Both databases are queried simultaneously
-- Project memories are shown first with a `[project]` tag
-- Global memories are shown without tags
-- When adding new memories, use the `scope` parameter:
-  - `scope: "global"` - Store in global database (default for manual additions)
-  - `scope: "project"` - Store in project database (default for learnings)
-
-**Configuration:**
-To disable hybrid storage and use global-only, edit `src/config.ts`:
-```typescript
-export const ENABLE_HYBRID_STORAGE = false;
+To query the database directly:
+```bash
+sqlite3 ~/.opencode/elf/memory.db "SELECT * FROM golden_rules"
 ```
 
-To customize the database location, edit `GLOBAL_ELF_DIR` in `src/config.ts` and rebuild the plugin.
+To reset all data:
+```bash
+rm -rf ~/.opencode/elf/
+```
 
 ## Database Schema
 
@@ -563,11 +543,6 @@ npm run build
 
 ### Embedding Model Download
 First run will download the model (~90MB). This takes 1-2 minutes. Subsequent runs are instant.
-
-### Database Location
-Database is stored at: `~/.opencode/elf/memory.db`
-
-To reset: `rm -rf ~/.opencode/elf/`
 
 ### Performance Issues
 

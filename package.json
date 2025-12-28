@@ -1,6 +1,6 @@
 {
   "name": "opencode-elf",
-  "version": "0.5.3",
+  "version": "0.6.0",
   "description": "Emergent Learning Framework (ELF) plugin for OpenCode - Learn from past successes and failures with hybrid global/project storage",
   "type": "module",
   "main": "dist/index.js",
@@ -21,7 +21,8 @@
     "cleanup:clean": "node scripts/cleanup-expired.js clean",
     "test:simulate": "ts-node tests/simulate.ts",
     "test:hybrid": "ts-node tests/test-hybrid.ts",
-    "test:benchmark": "ts-node tests/benchmark.ts"
+    "test:benchmark": "ts-node tests/benchmark.ts",
+    "test:parity": "ts-node tests/test-parity.ts"
   },
   "keywords": [
     "opencode",

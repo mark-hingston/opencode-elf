@@ -21,6 +21,9 @@ export const ELFPlugin: Plugin = async ({ directory }: PluginInput) => {
   // Track initialization state
   let initError: Error | null = null;
 
+  // Track the most recently injected learning IDs to provide feedback
+  let lastInjectedLearningIds: string[] = [];
+
   // 1. Start initialization in the background (do not await here)
   const initPromise = (async () => {
     console.log("ELF: Initializing in background...");
@@ -89,6 +92,9 @@ export const ELFPlugin: Plugin = async ({ directory }: PluginInput) => {
 
         // Get relevant context from ELF
         const context = await queryService.getContext(userMessage);
+
+        // Track which items were injected for feedback loop
+        lastInjectedLearningIds = context.relevantLearnings.map(r => r.item.id);
 
         // Track which golden rules we're using
         if (context.goldenRules.length > 0) {
@@ -198,6 +204,52 @@ export const ELFPlugin: Plugin = async ({ directory }: PluginInput) => {
 
           metricsService.record('learning_failure', 1, { tool: toolName });
           console.log(`ELF: Recorded failure - ${learningContent.slice(0, 50)}...`);
+
+          // Feedback loop: Penalize learnings that were present when failure happened
+          if (lastInjectedLearningIds.length > 0) {
+            for (const id of lastInjectedLearningIds) {
+              await queryService.updateLearningUtility(id, -0.1);
+            }
+            console.log(`ELF: Penalized ${lastInjectedLearningIds.length} learnings due to failure`);
+            lastInjectedLearningIds = []; // Clear after use
+          }
+        } else {
+          // Success recording and utility boosting
+          const isSuccess = !hasError && (exitCode === 0 || exitCode === undefined);
+
+          // Heuristic for "complex" command
+          let commandContext = "";
+          if (args) {
+            if (typeof args.command === 'string') commandContext = args.command;
+            else if (typeof args.cmd === 'string') commandContext = args.cmd;
+            else commandContext = JSON.stringify(args);
+          }
+
+          const isComplex = commandContext.length > 20 ||
+            ['build', 'compile', 'deploy', 'test', 'git', 'docker', 'npm', 'yarn', 'pnpm', 'npx'].some(k =>
+              commandContext.toLowerCase().includes(k)
+            );
+
+          if (isSuccess && isComplex) {
+            const learningContent = `Tool '${toolName}' succeeded running '${commandContext.length > 100 ? commandContext.substring(0, 97) + '...' : commandContext}'`;
+            const fullContext = JSON.stringify({ args, result });
+
+            await queryService.recordLearning(
+              learningContent,
+              'success',
+              fullContext
+            );
+            console.log(`ELF: Recorded success - ${learningContent.slice(0, 50)}...`);
+          }
+
+          // Feedback loop: Boost learnings that were present when success happened
+          if (isSuccess && lastInjectedLearningIds.length > 0) {
+            for (const id of lastInjectedLearningIds) {
+              await queryService.updateLearningUtility(id, 0.1);
+            }
+            console.log(`ELF: Boosted ${lastInjectedLearningIds.length} learnings due to success`);
+            lastInjectedLearningIds = []; // Clear after use
+          }
         }
       } catch (error) {
         console.error("ELF: Error in event hook", error);

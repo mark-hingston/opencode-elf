@@ -7,6 +7,8 @@
 - **Golden Rules**: Constitutional principles that guide all actions  
 - **Heuristics**: Pattern-based suggestions triggered by keywords/regex  
 - **Learnings**: Automatic recording of tool execution failures and successes  
+- **Confidence & Utility**: Feedback loop that boosts or penalizes memories based on success  
+- **Emergence Loop**: Memory consolidation promotes repeated patterns to Golden Rules
 - **Context Injection**: Relevant past experiences are injected into each conversation  
 - **Hybrid Storage**: Support for both global and project-scoped memories  
 - **Hybrid Search**: Combined vector (semantic) + FTS5 (keyword) search for best results
@@ -127,7 +129,14 @@ Restart OpenCode. The plugin will automatically load.
 │  ┌─────────────────┐      ┌────────────────────┐     │
 │  │  event          │─────▶│ Learning Loop      │     │
 │  │  (post-tool)    │      │ - Record failures  │     │
-│  │                 │      │ - Track patterns   │     │
+│  │                 │      │ - Record successes │     │
+│  │                 │      │ - Utility Feedback │     │
+│  └─────────────────┘      └────────────────────┘     │
+│                                                      │
+│  Consolidation:                                      │
+│  ┌─────────────────┐      ┌────────────────────┐     │
+│  │  Emergence Loop │─────▶│ Memory Promotion   │     │
+│  │  (Periodic)     │      │ Cluster Learnings  │     │
 │  └─────────────────┘      └────────────────────┘     │
 │                                                      │
 │  Storage:                                            │
@@ -616,7 +625,9 @@ npm run test:benchmark
 - [x] **Performance optimizations (parallel queries + embedding cache)**
 - [x] **Hybrid search (vector + FTS5 full-text search)**
 - [x] **Privacy controls (`<private>` tag filtering)**
-- [ ] Success detection (currently only failures are auto-recorded)
+- [x] **Confidence & Utility Tracking (Feedback loop)**
+- [x] **Success Pattern Detection**
+- [x] **Memory Consolidation Loop (Emergence)**
 - [ ] Experiment tracking (hypothesis testing)
 - [ ] Decision records (ADRs)
 - [ ] Vector index optimization (avoid scanning all learnings)

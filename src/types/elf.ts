@@ -17,6 +17,7 @@ export interface Learning {
   embedding: Embedding;
   created_at: number;
   context_hash: string; // Hash of the tool output/error for deduplication
+  utility_score?: number; // Default 1.0. Increment on success, decrement on failure.
   scope?: MemoryScope; // Added for tracking where the learning came from
   matchType?: 'semantic' | 'keyword' | 'hybrid'; // How this learning was found in search
 }

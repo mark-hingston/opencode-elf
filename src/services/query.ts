@@ -66,11 +66,11 @@ export class QueryService {
     const paths = getDbPaths(this.workingDirectory);
     const clients = getDbClients(paths);
     const scopes: MemoryScope[] = ["global"];
-    
+
     if (paths.project) {
       scopes.push("project");
     }
-    
+
     return { clients, scopes };
   }
 
@@ -100,7 +100,7 @@ export class QueryService {
    */
   private async getTopGoldenRules(): Promise<GoldenRule[]> {
     const { clients, scopes } = this.getClients();
-    
+
     // Query all databases in parallel
     const results = await Promise.all(
       clients.map(async (db, i) => {
@@ -108,7 +108,7 @@ export class QueryService {
           sql: "SELECT * FROM golden_rules ORDER BY hit_count DESC",
           args: [],
         });
-        
+
         return result.rows.map(row => ({
           id: row.id as string,
           content: row.content as string,
@@ -119,10 +119,10 @@ export class QueryService {
         }));
       })
     );
-    
+
     // Flatten results
     const allRules = results.flat();
-    
+
     // Sort by hit count and take top N
     // Prioritize project rules by giving them a slight boost in sorting
     allRules.sort((a, b) => {
@@ -130,7 +130,7 @@ export class QueryService {
       if (a.scope === "global" && b.scope === "project") return 1;
       return b.hit_count - a.hit_count;
     });
-    
+
     return allRules.slice(0, MAX_GOLDEN_RULES);
   }
 
@@ -140,12 +140,12 @@ export class QueryService {
   private async searchLearnings(prompt: string): Promise<SearchResult<Learning>[]> {
     const { clients, scopes } = this.getClients();
     const promptEmbedding = await embeddingService.generate(prompt);
-    
+
     // Query all databases in parallel
     const results = await Promise.all(
       clients.map(async (db, i) => {
         const result = await db.execute("SELECT * FROM learnings");
-        
+
         return result.rows
           .map(row => {
             const learning: Learning = {
@@ -155,20 +155,23 @@ export class QueryService {
               embedding: JSON.parse(row.embedding as string),
               created_at: row.created_at as number,
               context_hash: row.context_hash as string,
+              utility_score: row.utility_score as number || 1.0,
               scope: scopes[i],
             };
-            
-            const score = embeddingService.cosineSimilarity(promptEmbedding, learning.embedding);
-            
+
+            const rawSimilarity = embeddingService.cosineSimilarity(promptEmbedding, learning.embedding);
+            // Multiply similarity by utility_score to rank proven solutions higher
+            const score = rawSimilarity * (learning.utility_score || 1.0);
+
             return { item: learning, score };
           })
           .filter(result => result.score >= SIMILARITY_THRESHOLD);
       })
     );
-    
+
     // Flatten results
     const allLearnings = results.flat();
-    
+
     // Sort by score (project learnings get slight boost)
     allLearnings.sort((a, b) => {
       // Prioritize project learnings slightly
@@ -180,7 +183,7 @@ export class QueryService {
       }
       return b.score - a.score;
     });
-    
+
     return allLearnings.slice(0, MAX_RELEVANT_LEARNINGS);
   }
 
@@ -234,6 +237,7 @@ export class QueryService {
                 embedding: JSON.parse(learningRow.embedding as string),
                 created_at: learningRow.created_at as number,
                 context_hash: learningRow.context_hash as string,
+                utility_score: learningRow.utility_score as number || 1.0,
                 scope,
               },
               score: 1.0 // FTS matches are considered high confidence for exact matches
@@ -305,21 +309,21 @@ export class QueryService {
   private async getMatchingHeuristics(prompt: string): Promise<Heuristic[]> {
     const { clients, scopes } = this.getClients();
     const seenPatterns = new Set<string>();
-    
+
     // Query all databases in parallel
     const results = await Promise.all(
       clients.map(async (db, i) => {
         const result = await db.execute("SELECT * FROM heuristics");
-        
+
         const heuristics: Heuristic[] = [];
-        
+
         for (const row of result.rows) {
           const pattern = row.pattern as string;
-          
+
           // Skip duplicates (project takes precedence - it comes first in array)
           if (seenPatterns.has(pattern)) continue;
           seenPatterns.add(pattern);
-          
+
           const heuristic: Heuristic = {
             id: row.id as string,
             pattern,
@@ -327,7 +331,7 @@ export class QueryService {
             created_at: row.created_at as number,
             scope: scopes[i],
           };
-          
+
           // Check if pattern matches prompt
           try {
             const regex = new RegExp(heuristic.pattern, "i");
@@ -339,11 +343,11 @@ export class QueryService {
             console.error(`Invalid heuristic pattern: ${heuristic.pattern}`, error);
           }
         }
-        
+
         return heuristics;
       })
     );
-    
+
     // Flatten results
     return results.flat();
   }
@@ -355,7 +359,8 @@ export class QueryService {
     content: string,
     category: 'success' | 'failure',
     context: string,
-    scope: MemoryScope = "project"
+    scope: MemoryScope = "project",
+    utilityScore: number = 1.0
   ): Promise<void> {
     // Privacy check - skip recording if content or context contains <private> tags
     if (containsPrivateTag(content) || containsPrivateTag(context)) {
@@ -370,32 +375,32 @@ export class QueryService {
     const paths = getDbPaths(this.workingDirectory);
     const dbPath = scope === "project" && paths.project ? paths.project : paths.global;
     const db = getDbClient(dbPath);
-    
+
     // Generate hash to avoid duplicates
     const contextHash = createHash('sha256').update(sanitizedContext).digest('hex').slice(0, 16);
-    
+
     // Check if we already have this learning
     const existing = await db.execute({
       sql: "SELECT id FROM learnings WHERE context_hash = ?",
       args: [contextHash],
     });
-    
+
     if (existing.rows.length > 0) {
       return; // Already recorded
     }
-    
+
     // Generate embedding
     const embedding = await embeddingService.generate(sanitizedContent);
-    
+
     // Store learning
     const id = createHash('sha256')
       .update(sanitizedContent + Date.now().toString())
       .digest('hex')
       .slice(0, 16);
-    
+
     await db.execute({
-      sql: `INSERT INTO learnings (id, content, category, embedding, created_at, context_hash)
-            VALUES (?, ?, ?, ?, ?, ?)`,
+      sql: `INSERT INTO learnings (id, content, category, embedding, created_at, context_hash, utility_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
       args: [
         id,
         sanitizedContent,
@@ -403,8 +408,26 @@ export class QueryService {
         JSON.stringify(embedding),
         Date.now(),
         contextHash,
+        utilityScore,
       ],
     });
+  }
+
+  /**
+   * Update the utility score of a learning
+   * Used to boost items that lead to success and penalize those that don't
+   */
+  async updateLearningUtility(learningId: string, delta: number): Promise<void> {
+    const { clients } = this.getClients();
+
+    await Promise.all(
+      clients.map(db =>
+        db.execute({
+          sql: "UPDATE learnings SET utility_score = utility_score + ? WHERE id = ?",
+          args: [delta, learningId]
+        })
+      )
+    );
   }
 
   /**
@@ -415,12 +438,12 @@ export class QueryService {
     const dbPath = scope === "project" && paths.project ? paths.project : paths.global;
     const db = getDbClient(dbPath);
     const embedding = await embeddingService.generate(content);
-    
+
     const id = createHash('sha256')
       .update(content + Date.now().toString())
       .digest('hex')
       .slice(0, 16);
-    
+
     await db.execute({
       sql: `INSERT INTO golden_rules (id, content, embedding, created_at, hit_count)
             VALUES (?, ?, ?, ?, ?)`,
@@ -439,7 +462,7 @@ export class QueryService {
    */
   async incrementGoldenRuleHits(ruleIds: string[]): Promise<void> {
     const { clients } = this.getClients();
-    
+
     // Update hit counts in all databases in parallel
     await Promise.all(
       clients.flatMap(db =>
@@ -458,7 +481,7 @@ export class QueryService {
    */
   formatContextForPrompt(context: ELFContext): string {
     const parts: string[] = ["[ELF MEMORY]"];
-    
+
     if (context.goldenRules.length > 0) {
       parts.push("\nGolden Rules:");
       for (const rule of context.goldenRules) {
@@ -466,7 +489,7 @@ export class QueryService {
         parts.push(`- ${rule.content}${scopeTag}`);
       }
     }
-    
+
     if (context.relevantLearnings.length > 0) {
       parts.push("\nRelevant Past Experiences:");
       for (const { item, score } of context.relevantLearnings) {
@@ -475,7 +498,7 @@ export class QueryService {
         parts.push(`${emoji} [${(score * 100).toFixed(0)}%] ${item.content}${scopeTag}`);
       }
     }
-    
+
     if (context.heuristics.length > 0) {
       parts.push("\nApplicable Heuristics:");
       for (const heuristic of context.heuristics) {
@@ -483,7 +506,7 @@ export class QueryService {
         parts.push(`- ${heuristic.suggestion}${scopeTag}`);
       }
     }
-    
+
     return parts.join("\n");
   }
 }

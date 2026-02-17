@@ -75,18 +75,21 @@ export const ELFPlugin: Plugin = async ({ directory }: PluginInput) => {
   // 3. Return hooks immediately
   return {
     /**
-     * Chat params hook - Inject ELF context before the LLM processes the message
+     * Chat message hook - Inject ELF context into system prompt before LLM processing
      */
-    "chat.params": async (params: Record<string, unknown>) => {
+    "chat.message": async (input, output) => {
       const start = Date.now();
 
       try {
         // Wait for init to finish (only affects the very first message)
         await ensureReady();
 
-        const input = params.input as Record<string, unknown> | undefined;
-        const message = input?.message as Record<string, unknown> | undefined;
-        const userMessage = message?.text as string | undefined;
+        // Extract user text from message parts (TextParts have type "text" and a text field)
+        const userMessage = output.parts
+          .filter((p): p is Extract<typeof p, { type: "text" }> => p.type === "text")
+          .map(p => p.text)
+          .join("\n")
+          .trim();
 
         if (!userMessage) return;
 
@@ -110,13 +113,11 @@ export const ELFPlugin: Plugin = async ({ directory }: PluginInput) => {
           context.relevantLearnings.length > 0 ||
           context.heuristics.length > 0) {
 
-          // Inject into system prompt or prepend to user message
-          const systemPrompt = input?.systemPrompt as string | undefined;
-          if (systemPrompt && input) {
-            input.systemPrompt = `${systemPrompt}\n\n${elfMemory}`;
-          } else if (message) {
-            message.text = `${elfMemory}\n\n${userMessage}`;
-          }
+          // Inject into the system prompt via output.message.system
+          const currentSystem = output.message.system || "";
+          output.message.system = currentSystem
+            ? `${currentSystem}\n\n${elfMemory}`
+            : elfMemory;
 
           // Record metrics
           const duration = Date.now() - start;
@@ -129,7 +130,7 @@ export const ELFPlugin: Plugin = async ({ directory }: PluginInput) => {
         }
       } catch (error) {
         // Fail open: If ELF fails, log it but don't break the user's chat
-        console.error("ELF: Error in chat.params hook", error);
+        console.error("ELF: Error in chat.message hook", error);
       }
     },
 

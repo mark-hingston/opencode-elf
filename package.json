@@ -51,7 +51,7 @@
   "opencode": {
     "type": "plugin",
     "hooks": [
-      "chat.params",
+      "chat.message",
       "event"
     ]
   },

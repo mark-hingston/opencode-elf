@@ -120,7 +120,7 @@ Restart OpenCode. The plugin will automatically load.
 │                                                      │
 │  Hooks:                                              │
 │  ┌─────────────────┐      ┌────────────────────┐     │
-│  │  chat.params    │─────▶│ Context Injection  │     │
+│  │  chat.message   │─────▶│ Context Injection  │     │
 │  │  (pre-LLM)      │      │ - Golden Rules     │     │
 │  │                 │      │ - Past Learnings   │     │
 │  │                 │      │ - Heuristics       │     │
